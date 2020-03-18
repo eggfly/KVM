@@ -39,8 +39,11 @@ android {
 }
 
 dependencies {
-    implementation group: 'org.smali', name: 'dexlib2', version: '2.4.0'
-    implementation group: 'org.smali', name: 'baksmali', version: '2.4.0'
+    //noinspection GradleDependency
+    implementation group: 'org.smali', name: 'dexlib2', version: '2.2.2' // 2.2.3 not ok
+
+    //noinspection GradleDependency
+    implementation group: 'org.smali', name: 'baksmali', version: '2.2.2' // 2.2.3 not ok
 
     implementation fileTree(dir: 'libs', include: ['*.jar'])
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
