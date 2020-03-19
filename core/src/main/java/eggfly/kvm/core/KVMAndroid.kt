@@ -9,6 +9,7 @@ import org.jf.dexlib2.ReferenceType
 import org.jf.dexlib2.dexbacked.DexBackedClassDef
 import org.jf.dexlib2.dexbacked.DexBackedDexFile
 import org.jf.dexlib2.dexbacked.DexBackedMethod
+import org.jf.dexlib2.dexbacked.DexReader
 import org.jf.dexlib2.dexbacked.instruction.DexBackedInstruction
 import org.jf.dexlib2.dexbacked.instruction.DexBackedInstruction21t
 import org.jf.dexlib2.iface.MultiDexContainer
@@ -34,7 +35,7 @@ object KVMAndroid {
     }
 
     init {
-        logW("init()")
+        logV("init()")
     }
 
     fun init(context: Context) {
@@ -83,7 +84,7 @@ object KVMAndroid {
         needThisObj: Boolean,
         parameters: Array<Any?>
     ): Any? {
-        logW("invoke method: $method")
+        logV("invoke method: $method")
         val impl = method.implementation!!
         val parameterCountBy32BitsWithoutThisObj = calculate32BitCount(method.parameterTypes)
         val parameterCount =
@@ -99,48 +100,95 @@ object KVMAndroid {
             impl.instructions.first() as DexBackedInstruction
         // 里面每次都是new DexReader, 可能可以优化
         val reader = method.dexFile.readerAt(firstInstruction.instructionStart)
+        // TODO: state设计比较丑陋且性能堪忧
+        var state = InterpreterState(null, false, null, null)
         do {
-            val instruction = DexBackedInstruction.readFrom(reader) as DexBackedInstruction
-            val end: Boolean = handleOneInstruction(instruction, registers, method)
-            if (end) {
-                logW("end")
-                break
-            }
-        } while (true)
-        // TODO
-        return null
+            val instruction =
+                state.jumpInstruction
+                    ?: DexBackedInstruction.readFrom(reader) as DexBackedInstruction
+            state =
+                interpretInstruction(reader, instruction, registers, state.invokeTempReturnValue)
+        } while (!state.returned)
+        logV("returned")
+        return state.returnValue
     }
 
-    private fun handleOneInstruction(
+    /**
+     * 表示单条指令执行后的结果状态
+     */
+    data class InterpreterState(
+        val jumpInstruction: DexBackedInstruction?,
+        val returned: Boolean,
+        val returnValue: Any?,
+        val invokeTempReturnValue: Any?
+    )
+
+    private fun interpretInstruction(
+        reader: DexReader,
         instruction: DexBackedInstruction,
         registers: Array<Any?>,
-        method: DexBackedMethod
-    ): Boolean {
+        lastInvokeTempReturnValue: Any?
+    ): InterpreterState {
         var returnValue: Any? = null
-        var end = false
+        var invokeTempReturnValue: Any? = null
+        var returned = false
+        var jumpInstruction: DexBackedInstruction? = null
         logInstruction(instruction)
         when (instruction.opcode) {
+            // 0x0b
+            Opcode.MOVE_RESULT_WIDE -> {
+                val i = instruction as Instruction11x
+                registers[i.registerA] = lastInvokeTempReturnValue
+                registers[i.registerA + 1] = SecondSlotPlaceHolderOf64BitValue
+                logV("MOVE_RESULT_WIDE:$lastInvokeTempReturnValue")
+            }
+            // 0x0c
+            Opcode.MOVE_RESULT_OBJECT -> {
+                val i = instruction as Instruction11x
+                registers[i.registerA] = lastInvokeTempReturnValue
+                logV("MOVE_RESULT_OBJECT:$lastInvokeTempReturnValue")
+            }
+            // 0x0e
+            Opcode.RETURN_VOID -> {
+                instruction as Instruction10x
+                returned = true
+                returnValue = null
+                logV("RETURN_VOID: null")
+            }
+            // 0x10
+            Opcode.RETURN_WIDE -> {
+                val i = instruction as Instruction11x
+                val value = registers[i.registerA] as Long
+                returned = true
+                returnValue = value
+                logV("RETURN_WIDE: $value")
+            }
+            // 0x12
             Opcode.CONST_4 -> {
                 // Why NarrowWideLiteralInstruction extends WideLiteralInstruction?
                 val i = instruction as Instruction11n
                 registers[i.registerA] = i.narrowLiteral
             }
+            // 0x13
             Opcode.CONST_16 -> {
                 // Why NarrowWideLiteralInstruction extends WideLiteralInstruction?
                 val i = instruction as Instruction21s
                 registers[i.registerA] = i.narrowLiteral
             }
-            Opcode.CONST_WIDE -> {
-                val i = instruction as Instruction51l
-                registers[i.registerA] = i.wideLiteral
-                registers[i.registerA + 1] = SecondSlotPlaceHolderOf64BitValue
-            }
+            // 0x16
             Opcode.CONST_WIDE_16 -> {
                 val i = instruction as Instruction21s
                 // wide need long
                 registers[i.registerA] = i.wideLiteral
                 registers[i.registerA + 1] = SecondSlotPlaceHolderOf64BitValue
             }
+            // 0x18
+            Opcode.CONST_WIDE -> {
+                val i = instruction as Instruction51l
+                registers[i.registerA] = i.wideLiteral
+                registers[i.registerA + 1] = SecondSlotPlaceHolderOf64BitValue
+            }
+            // 0x1a
             Opcode.CONST_STRING -> {
                 val i = instruction as Instruction21c
                 if (i.referenceType == ReferenceType.STRING) {
@@ -148,54 +196,64 @@ object KVMAndroid {
                 } else {
                     throw IllegalArgumentException("referenceType is not STRING")
                 }
-                logW("" + i)
+                logV("" + i)
             }
-            Opcode.INVOKE_STATIC -> {
-                returnValue = handleInstruction35c(instruction, registers, false)
-                logW("INVOKE_STATIC: $returnValue")
-            }
-            Opcode.INVOKE_VIRTUAL -> {
-                returnValue = handleInstruction35c(instruction, registers, true)
-                logW("INVOKE_VIRTUAL: $returnValue")
-            }
+            // 0x31
             Opcode.CMP_LONG -> {
                 val i = instruction as Instruction23x
                 val value1 = registers[i.registerB] as Long
                 val value2 = registers[i.registerC] as Long
                 registers[i.registerA] = value1.compareTo(value2)
-                logW("" + i)
+                logV("" + i)
             }
+            // 0x39
             Opcode.IF_NEZ -> {
                 val i = instruction as DexBackedInstruction21t
                 val value = registers[i.registerA] as Int
                 if (value != 0) {
-                    val newInstructionOffset = i.instructionStart + i.codeOffset * 2
-                    logW("" + i.codeOffset)
-                    val reader = method.dexFile.readerAt(newInstructionOffset);
-                    val nextInstruction = DexBackedInstruction.readFrom(reader);
-                    logW("" + nextInstruction)
+                    logV("" + i.codeOffset)
+                    reader.offset = i.instructionStart + i.codeOffset * 2
+                    jumpInstruction = DexBackedInstruction.readFrom(reader) as DexBackedInstruction
+                    logV("" + jumpInstruction)
                 }
             }
-            Opcode.MOVE_RESULT_WIDE -> {
-                val i = instruction as Instruction11x
-                val value = registers[i.registerA] as Long
-                // TODO
-                logW("" + i)
+            // 0x6e
+            Opcode.INVOKE_VIRTUAL -> {
+                invokeTempReturnValue = handleInstruction35c(instruction, registers, true)
+                logV("INVOKE_VIRTUAL: $returnValue")
             }
-            Opcode.RETURN_WIDE -> {
-                val i = instruction as Instruction11x
-                val value = registers[i.registerA] as Long
-                // TODO
-                logW("" + i)
-                // break
+            // 0x71
+            Opcode.INVOKE_STATIC -> {
+                invokeTempReturnValue = handleInstruction35c(instruction, registers, false)
+                logV("INVOKE_STATIC: $returnValue")
+            }
+            // 0x81
+            Opcode.INT_TO_LONG -> {
+                val i = instruction as Instruction12x
+                val value = registers[i.registerB] as Int
+                registers[i.registerA] = value.toLong()
+                registers[i.registerA + 1] = SecondSlotPlaceHolderOf64BitValue
+            }
+            // 0xbb
+            Opcode.ADD_LONG_2ADDR -> {
+                val i = instruction as Instruction12x
+                val srcValue = registers[i.registerB] as Long
+                val targetValue = registers[i.registerA] as Long + srcValue
+                registers[i.registerA] = targetValue
+                registers[i.registerA + 1] = SecondSlotPlaceHolderOf64BitValue
             }
             else -> {
-                val msg = "" + instruction + "not supported yet"
+                val msg = instructionToString(instruction) + " not supported yet"
                 logE(msg)
                 throw NotImplementedError(msg)
             }
         }
-        return end
+        return InterpreterState(
+            jumpInstruction,
+            returned,
+            returnValue,
+            invokeTempReturnValue
+        )
     }
 
     private fun logE(msg: String) {
@@ -215,14 +273,16 @@ object KVMAndroid {
                 dexClasses.firstOrNull { it.type == methodRef.definingClass }
             if (classInDex == null) {
                 // It's a library class, not an application class
-                val libraryClass = loadClassBySignature(methodRef.definingClass)
+                val libraryClass = loadBootClassBySignature(methodRef.definingClass)
+                // TODO: 参数遇到非boot class需要处理
                 val parameterTypes = convertToTypes(methodRef.parameterTypes)
                 val method = libraryClass.getDeclaredMethod(methodRef.name, *parameterTypes)
-                logW("" + method)
+                logV("" + method)
                 val invokeParams = parametersFromRegister(i, registers)
+                val realParams = remove64BitPlaceHolders(invokeParams)
                 // static or virtual?
                 // Start to invoke, 山口山~!
-                return method.invoke(null, *invokeParams)
+                return method.invoke(null, *realParams)
             } else {
                 val method = classInDex.methods.firstOrNull {
                     it.name == methodRef.name && it.parameterTypes == methodRef.parameterTypes
@@ -238,6 +298,9 @@ object KVMAndroid {
             throw IllegalArgumentException("referenceType is not METHOD")
         }
     }
+
+    private fun remove64BitPlaceHolders(invokeParams: Array<Any?>) =
+        invokeParams.filter { it != SecondSlotPlaceHolderOf64BitValue }.toTypedArray()
 
     private fun parametersFromRegister(
         i: Instruction35c,
@@ -264,13 +327,9 @@ object KVMAndroid {
 
     private fun convertToTypes(parameterTypes: List<CharSequence>): Array<Class<*>?> {
         return parameterTypes.map { type ->
-            loadClassBySignature(type.toString())
+            loadBootClassBySignature(type.toString())
         }.toTypedArray()
     }
-
-    private fun loadClassBySignature(classSignature: String) =
-        Thread.currentThread()
-            .contextClassLoader!!.loadClass(convertClassSignatureToClassName(classSignature))
 
     fun setup() {
         val names = apk.dexEntryNames
@@ -284,50 +343,51 @@ object KVMAndroid {
                 val classFields = classDef.fields
                 val classMethods = classDef.methods
                 classMethods.forEach { method ->
-                    logW("Method: $method")
+                    logV("Method: $method")
                     val methodImpl = method.implementation
                     if (methodImpl == null) {
-                        logW("$method has no implementation")
+                        logV("$method has no implementation")
                     } else {
                         methodImpl.instructions.forEach { instruction ->
-                            logInstruction(instruction)
+                            logInstruction(instruction as DexBackedInstruction)
                             handleInstruction(instruction)
                         }
                     }
                 }
                 val size = classDef.size
-                logW("class:$classDef size:$size")
+                logV("class:$classDef size:$size")
             }
-            logW("" + entry)
+            logV("" + entry)
         }
         main()
     }
 
-    private fun logInstruction(instruction: Instruction) {
-        logW(
-            "${instruction.javaClass.simpleName}, opcode: ${instruction.opcode}, codeUnits: ${instruction.codeUnits}"
-        )
+    private fun logInstruction(instruction: DexBackedInstruction) {
+        logV(instructionToString(instruction))
     }
+
+    private fun instructionToString(instruction: DexBackedInstruction) =
+        "${instruction.instructionStart}: opcode=${instruction.opcode}, ${instruction.javaClass.simpleName}"
 
     private fun handleInstruction(instruction: Instruction) {
         val opcode = instruction.opcode
         when (opcode) {
             Opcode.CONST_STRING -> {
                 val i = instruction as Instruction21c
-                logW("${i.registerA}, ${i.reference}, ${i.referenceType}")
+                logV("${i.registerA}, ${i.reference}, ${i.referenceType}")
             }
             Opcode.INVOKE_VIRTUAL -> {
                 val i = instruction as Instruction35c
-                logW("${i.registerCount}, ${i.reference}, ${i.referenceType}")
+                logV("${i.registerCount}, ${i.reference}, ${i.referenceType}")
             }
             else -> {
             }
         }
-        logW("$opcode")
+        logV("$opcode")
     }
 
-    private fun logW(msg: String) {
-        Log.w(TAG, msg)
+    private fun logV(msg: String) {
+        Log.v(TAG, msg)
     }
 
 //    private fun dumpInstruction(instruction: Instruction?): String {

@@ -10,7 +10,7 @@ object KotlinTest {
     }
 
     fun test() {
-        val start = 1234567890123L
+        val start = 5L
         val result = foo(-1, start)
         Log.d(TAG, result.toString())
     }
