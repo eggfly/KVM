@@ -16,6 +16,7 @@ import org.jf.dexlib2.dexbacked.instruction.DexBackedInstruction22c
 import org.jf.dexlib2.iface.MultiDexContainer
 import org.jf.dexlib2.iface.instruction.Instruction
 import org.jf.dexlib2.iface.instruction.formats.*
+import org.jf.dexlib2.iface.reference.FieldReference
 import org.jf.dexlib2.iface.reference.MethodReference
 import org.jf.dexlib2.iface.reference.StringReference
 import org.jf.dexlib2.iface.reference.TypeReference
@@ -254,8 +255,12 @@ object KVMAndroid {
             // 0x5b
             Opcode.IPUT_OBJECT -> {
                 val i = instruction as DexBackedInstruction22c
-                var fieldValue = registers[i.registerB]
-
+                setFieldWithCheck(registers, i, Object::class.java)
+            }
+            // 0x5c
+            Opcode.IPUT_BOOLEAN -> {
+                val i = instruction as DexBackedInstruction22c
+                setFieldWithCheck(registers, i, Boolean::class.java)
             }
             // 0x6e
             Opcode.INVOKE_VIRTUAL -> {
@@ -298,9 +303,50 @@ object KVMAndroid {
         }
     }
 
-    private fun monitorEnter(obj: Any?) {
-        sun.misc.Unsafe
+    private fun setFieldWithCheck(
+        registers: Array<Any?>,
+        i: DexBackedInstruction22c,
+        checkingType: Class<*>
+    ) {
+        val targetObject = registers[i.registerB]
+        val fieldValue = registers[i.registerA]
+        if (fieldValue != null && !checkingType.isAssignableFrom(fieldValue.javaClass)) {
+            throw IllegalStateException("fieldValue to set into $targetObject is ${fieldValue.javaClass}, not assignable to $checkingType")
+        }
+        if (i.referenceType == ReferenceType.FIELD) {
+            val fieldRef = i.reference as FieldReference
+            val definingClass = fieldRef.definingClass
+            val classInDex = dexClassesMap[definingClass]
+            if (classInDex == null) {
+                // It's a system class, not an application class
+                val systemClass = loadBootClassBySignature(definingClass)
+                throw NotImplementedError()
+            } else {
+                if (targetObject is KVMInstance) {
+                    val instanceFields = classInDex.instanceFields
+                    val field = instanceFields.first {
+                        it.name == fieldRef.name && it.type == fieldRef.type
+                    }
+                    if (field == null) {
+                        throw NoSuchFieldError("found class but cannot find field: $field")
+                    } else {
+                        val index = instanceFields.indexOf(field)
+                        logV("" + index + "" + field.fieldIndex)
+                        targetObject.instanceFields[index] = fieldValue
+                    }
+                } else {
+                    throw IllegalStateException("not a KVMInstance instance")
+                }
+            }
+        } else {
+            throw IllegalArgumentException("referenceType is not FIELD")
+        }
     }
+
+    private fun monitorEnter(obj: Any) {
+    }
+
+    private fun monitorExit(obj: Any) {}
 
     object LazyInitializeSystemClassInstance
 
@@ -352,23 +398,35 @@ object KVMAndroid {
             val classInDex = dexClassesMap[definingClass]
             if (classInDex == null) {
                 // It's a system class, not an application class
-                val systemClass = loadBootClassBySignature(methodRef.definingClass)
+                val systemClass = loadBootClassBySignature(definingClass)
                 // TODO: 参数遇到非boot class需要处理(可能没有这个情况，除非boot class有问题)
                 val parameterTypes = convertToTypes(methodRef.parameterTypes)
                 val invokeParams = parametersFromRegister(i, registers)
                 val realParams = remove64BitPlaceHolders(invokeParams)
                 return if ("<init>" == methodRef.name) {
+                    // must be invoke-direct here, and must after a new-instance?
                     val constructor = systemClass.getConstructor(*parameterTypes)
                     constructor.isAccessible = true
                     val realParamsWithoutFirst = realParams.sliceArray(1 until realParams.size)
+                    val newObj = constructor.newInstance(*realParamsWithoutFirst)
                     // new java.lang.Object() maybe no use here
-                    constructor.newInstance(*realParamsWithoutFirst)
+                    if (registers[i.registerC] is LazyInitializeSystemClassInstance) {
+                        // replace LazyInitializeSystemClassInstance to the real system class object
+                        registers[i.registerC] = newObj
+                    }
+                    newObj
                 } else {
                     val method = systemClass.getDeclaredMethod(methodRef.name, *parameterTypes)
                     logV("" + method)
                     // static or virtual?
-                    // Start to invoke, 山口山~!
-                    method.invoke(null, *realParams)
+                    // start to invoke, 山口山~!
+                    if (needThisObj) {
+                        val firstParamIsThisObj = realParams[0]
+                        val realParamsWithoutFirst = realParams.sliceArray(1 until realParams.size)
+                        method.invoke(firstParamIsThisObj, *realParamsWithoutFirst)
+                    } else {
+                        method.invoke(null, *realParams)
+                    }
                 }
             } else {
                 val method = classInDex.methods.firstOrNull {

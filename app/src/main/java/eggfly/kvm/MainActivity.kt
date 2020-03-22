@@ -39,7 +39,6 @@ class MainActivity : AppCompatActivity() {
         val t1 = KotlinTest.testTime()
         val t2 = KVMAndroid.invokeTestMethodTime()
         Toast.makeText(this, "directly: $t1 ms\nmy interpreter: $t2 ms", Toast.LENGTH_LONG).show()
-
     }
 
     override fun onResume() {
