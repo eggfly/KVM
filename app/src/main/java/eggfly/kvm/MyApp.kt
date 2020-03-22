@@ -19,8 +19,10 @@ class MyApp : Application() {
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "onCreate")
+
+        leet117()
         KVMAndroid.init(this)
         // KVMAndroid.setup()
-        KVMAndroid.invokeTestMethod()
+
     }
 }

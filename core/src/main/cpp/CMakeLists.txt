@@ -10,6 +10,11 @@ cmake_minimum_required(VERSION 3.4.1)
 # You can define multiple libraries, and CMake builds them for you.
 # Gradle automatically packages shared libraries with your APK.
 
+file(GLOB dextool_srcs "dextool/*.cpp")
+file(GLOB dalvik_libdex_srcs "dalvik/libdex/*.cpp")
+
+include_directories(dalvik/)
+
 add_library( # Sets the name of the library.
         native-lib
 
@@ -17,7 +22,10 @@ add_library( # Sets the name of the library.
         SHARED
 
         # Provides a relative path to your source file(s).
-        native-lib.cpp)
+        ${dextool_srcs}
+        ${dalvik_libdex_srcs}
+        native-lib.cpp
+        dexinfo.c)
 
 # Searches for a specified prebuilt library and stores the path as a
 # variable. Because CMake includes system libraries in the search path by
@@ -31,6 +39,12 @@ find_library( # Sets the name of the path variable.
         # Specifies the name of the NDK library that
         # you want CMake to locate.
         log)
+find_library( # Sets the name of the path variable.
+        zlib
+
+        # Specifies the name of the NDK library that
+        # you want CMake to locate.
+        z)
 
 # Specifies libraries CMake should link to your target library. You
 # can link multiple libraries, such as libraries you define in this
@@ -41,4 +55,5 @@ target_link_libraries( # Specifies the target library.
 
         # Links the target library to the log library
         # included in the NDK.
-        ${log-lib})
+        ${log-lib}
+        ${zlib})
