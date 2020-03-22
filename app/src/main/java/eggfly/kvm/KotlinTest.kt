@@ -32,6 +32,14 @@ object KotlinTest {
 
     data class TestClass(val test: Any?)
 
+    open class BaseClass(private val test: Any?) {
+        constructor() : this(1) {
+            Log.d(TAG, "value=$test")
+        }
+    }
+
+    class TestDerivedClass(val test2: Any) : BaseClass()
+
     @Suppress("EXPERIMENTAL_API_USAGE")
     data class TestSimpleClass(val value: UInt)
 
@@ -42,8 +50,8 @@ object KotlinTest {
     ): Long {
         // Log.d(TAG, "foo()")
         if (value == 0L) {
-            val l = TestClass(1)
-            Log.d(TAG, "finally return: $l")
+            val l = TestDerivedClass(12222222uL)
+            Log.d(TAG, "finally return: $l, test2=" + l.test2)
             return 9999999
         }
         return 10000000 + foo(step, value + step)

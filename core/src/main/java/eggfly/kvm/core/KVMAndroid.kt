@@ -243,14 +243,29 @@ object KVMAndroid {
             // 0x39
             Opcode.IF_NEZ -> {
                 val i = instruction as DexBackedInstruction21t
-                val value = registers[i.registerA] as Int
-                if (value != 0) {
+                val rawValue = registers[i.registerA]
+                val isZero = if (rawValue == null) {
+                    true
+                } else {
+                    rawValue == 0
+                }
+                if (!isZero) {
                     logV("" + i.codeOffset)
                     reader.offset = i.instructionStart + i.codeOffset * 2
                     interpreterState.jumpInstruction =
                         DexBackedInstruction.readFrom(reader) as DexBackedInstruction
                     logV("IF_NEZ: " + interpreterState.jumpInstruction)
                 }
+            }
+            // 0x54
+            Opcode.IGET_OBJECT -> {
+                val i = instruction as DexBackedInstruction22c
+                getFieldWithCheck(registers, i, Object::class.java)
+            }
+            // 0x5a
+            Opcode.IPUT_WIDE -> {
+                val i = instruction as DexBackedInstruction22c
+                setFieldWithCheck(registers, i, null)
             }
             // 0x5b
             Opcode.IPUT_OBJECT -> {
@@ -303,45 +318,85 @@ object KVMAndroid {
         }
     }
 
+    private fun getFieldWithCheck(
+        registers: Array<Any?>,
+        i: DexBackedInstruction22c,
+        checkingType: Class<*>?
+    ) {
+        val targetObject = registers[i.registerB]
+        if (i.referenceType != ReferenceType.FIELD) {
+            throw IllegalArgumentException("referenceType is not FIELD")
+        }
+        val fieldRef = i.reference as FieldReference
+        val definingClass = fieldRef.definingClass
+        val classInDex = dexClassesMap[definingClass]
+        if (classInDex == null) {
+            // It's a system class, not an application class
+            val systemClass = loadBootClassBySignature(definingClass)
+            TODO()
+        } else {
+            if (targetObject !is KVMInstance) {
+                throw IllegalStateException("not a KVMInstance instance")
+            }
+            val instanceFields = classInDex.instanceFields
+            val field = instanceFields.first {
+                it.name == fieldRef.name && it.type == fieldRef.type
+            }
+            if (field == null) {
+                throw NoSuchFieldError("found class but cannot find field: $field")
+            } else {
+                val index = instanceFields.indexOf(field)
+                val fieldValue = targetObject.instanceFields[index]
+                logV("" + index + "" + field.fieldIndex + ", value=" + fieldValue)
+                if (fieldValue != null && checkingType != null && !checkingType.isAssignableFrom(
+                        fieldValue.javaClass
+                    )
+                ) {
+                    throw IllegalStateException("fieldValue to get from $targetObject is ${fieldValue.javaClass}, not assignable to $checkingType")
+                }
+                registers[i.registerA] = fieldValue
+            }
+        }
+    }
+
     private fun setFieldWithCheck(
         registers: Array<Any?>,
         i: DexBackedInstruction22c,
-        checkingType: Class<*>
+        checkingType: Class<*>?
     ) {
         val targetObject = registers[i.registerB]
         val fieldValue = registers[i.registerA]
-        if (fieldValue != null && !checkingType.isAssignableFrom(fieldValue.javaClass)) {
+        if (fieldValue != null && checkingType != null && !checkingType.isAssignableFrom(fieldValue.javaClass)) {
             throw IllegalStateException("fieldValue to set into $targetObject is ${fieldValue.javaClass}, not assignable to $checkingType")
         }
-        if (i.referenceType == ReferenceType.FIELD) {
-            val fieldRef = i.reference as FieldReference
-            val definingClass = fieldRef.definingClass
-            val classInDex = dexClassesMap[definingClass]
-            if (classInDex == null) {
-                // It's a system class, not an application class
-                val systemClass = loadBootClassBySignature(definingClass)
-                throw NotImplementedError()
-            } else {
-                if (targetObject is KVMInstance) {
-                    val instanceFields = classInDex.instanceFields
-                    val field = instanceFields.first {
-                        it.name == fieldRef.name && it.type == fieldRef.type
-                    }
-                    if (field == null) {
-                        throw NoSuchFieldError("found class but cannot find field: $field")
-                    } else {
-                        val index = instanceFields.indexOf(field)
-                        logV("" + index + "" + field.fieldIndex)
-                        targetObject.instanceFields[index] = fieldValue
-                    }
-                } else {
-                    throw IllegalStateException("not a KVMInstance instance")
-                }
-            }
-        } else {
+        if (i.referenceType != ReferenceType.FIELD) {
             throw IllegalArgumentException("referenceType is not FIELD")
         }
+        val fieldRef = i.reference as FieldReference
+        val definingClass = fieldRef.definingClass
+        val classInDex = dexClassesMap[definingClass]
+        if (classInDex == null) {
+            // It's a system class, not an application class
+            val systemClass = loadBootClassBySignature(definingClass)
+            TODO()
+        } else {
+            if (targetObject !is KVMInstance) {
+                throw IllegalStateException("not a KVMInstance instance")
+            }
+            val instanceFields = classInDex.instanceFields
+            val field = instanceFields.first {
+                it.name == fieldRef.name && it.type == fieldRef.type
+            }
+            if (field == null) {
+                throw NoSuchFieldError("found class but cannot find field: $field")
+            } else {
+                val index = instanceFields.indexOf(field)
+                logV("" + index + "" + field.fieldIndex)
+                targetObject.instanceFields[index] = fieldValue
+            }
+        }
     }
+
 
     private fun monitorEnter(obj: Any) {
     }
