@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
 import eggfly.kvm.core.KVMAndroid
+import eggfly.kvm.core.classToSignature
 import kotlinx.android.synthetic.main.activity_main.*
 
 const val TAG = "MainActivity"
@@ -25,7 +26,14 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         button.setOnClickListener {
-            test()
+            KVMAndroid.invoke(
+                classToSignature(MainActivity::class.java),
+                "test",
+                listOf(),
+                true,
+                arrayOf(this@MainActivity)
+            )
+            // test()
         }
         // Example of a call to a native method
         sample_text.text = stringFromJNI()

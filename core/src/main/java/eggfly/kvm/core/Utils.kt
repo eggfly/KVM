@@ -16,3 +16,8 @@ fun loadBootClassBySignature(signature: String): Class<*> {
     }
     return Thread.currentThread().contextClassLoader!!.loadClass(className)
 }
+
+fun classToSignature(clazz: Class<*>): String {
+    val name = clazz.canonicalName!!
+    return "L" + name.replace('.', '/') + ";"
+}
