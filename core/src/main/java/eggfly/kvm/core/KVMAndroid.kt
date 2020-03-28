@@ -22,6 +22,7 @@ import org.jf.dexlib2.iface.reference.MethodReference
 import org.jf.dexlib2.iface.reference.StringReference
 import org.jf.dexlib2.iface.reference.TypeReference
 import java.io.File
+import java.lang.reflect.Constructor
 import java.util.*
 
 object KVMAndroid {
@@ -51,7 +52,7 @@ object KVMAndroid {
             val entry = apk.getEntry(dex)
             entry!!.classes
         }.flatten()
-        dexClassesMap = dexClasses.map { it.type to KVMClass(it, false, arrayOf()) }.toMap()
+        dexClassesMap = dexClasses.map { it.type to KVMClass(it, arrayOf()) }.toMap()
     }
 
     private fun getStackFrame(): StackFrame {
@@ -141,6 +142,12 @@ object KVMAndroid {
             Opcode.NOP -> {
                 instruction as Instruction10x
             }
+            // 0x07
+            Opcode.MOVE_OBJECT -> {
+                val i = instruction as Instruction12x
+                val srcValue = registers[i.registerB]
+                registers[i.registerA] = srcValue
+            }
             // 0x0b
             Opcode.MOVE_RESULT_WIDE -> {
                 val i = instruction as Instruction11x
@@ -227,6 +234,41 @@ object KVMAndroid {
                 }
                 logV("" + i)
             }
+            // 0x1c
+            Opcode.CONST_CLASS -> {
+                val i = instruction as Instruction21c
+                if (i.referenceType == ReferenceType.TYPE) {
+                    val type = (i.reference as TypeReference).type
+                    val dexClass = findDexClassDef(type)
+                    if (dexClass == null) {
+                        // system class
+                        val systemClass = loadBootClassBySignature(type)
+                        registers[i.registerA] = systemClass
+                    } else {
+                        TODO()
+                    }
+                } else {
+                    throw IllegalArgumentException("referenceType is not TYPE")
+                }
+            }
+            // 0x1f
+            Opcode.CHECK_CAST -> {
+                val i = instruction as Instruction21c
+                if (i.referenceType == ReferenceType.TYPE) {
+                    val type = (i.reference as TypeReference).type
+                    val dexClass = findDexClassDef(type)
+                    if (dexClass == null) {
+                        // system class
+                        val systemClass = loadBootClassBySignature(type)
+                        val value = registers[i.registerA]
+                        systemClass.cast(value)
+                    } else {
+                        TODO()
+                    }
+                } else {
+                    throw IllegalArgumentException("referenceType is not TYPE")
+                }
+            }
             // 0x22
             Opcode.NEW_INSTANCE -> {
                 val i = instruction as Instruction21c
@@ -282,7 +324,12 @@ object KVMAndroid {
             // 0x62
             Opcode.SGET_OBJECT -> {
                 val i = instruction as DexBackedInstruction21c
-                getStaticFieldWithCheck(registers, i, Object::class.java)
+                accessStaticFieldWithCheck(AccessType.GET, registers, i, Object::class.java)
+            }
+            // 0x69
+            Opcode.SPUT_OBJECT -> {
+                val i = instruction as DexBackedInstruction21c
+                accessStaticFieldWithCheck(AccessType.SET, registers, i, Object::class.java)
             }
             // 0x6e
             Opcode.INVOKE_VIRTUAL -> {
@@ -317,6 +364,14 @@ object KVMAndroid {
                 registers[i.registerA] = targetValue
                 registers[i.registerA + 1] = SecondSlotPlaceHolderOf64BitValue
             }
+            // 0xbc
+            Opcode.SUB_LONG_2ADDR -> {
+                val i = instruction as Instruction12x
+                val srcValue = registers[i.registerB] as Long
+                val targetValue = registers[i.registerA] as Long - srcValue
+                registers[i.registerA] = targetValue
+                registers[i.registerA + 1] = SecondSlotPlaceHolderOf64BitValue
+            }
             else -> {
                 val msg = instructionToString(instruction) + " not supported yet"
                 logE(msg)
@@ -325,7 +380,10 @@ object KVMAndroid {
         }
     }
 
-    private fun getStaticFieldWithCheck(
+    enum class AccessType { GET, SET }
+
+    private fun accessStaticFieldWithCheck(
+        accessType: AccessType,
         registers: Array<Any?>,
         i: DexBackedInstruction21c,
         checkingType: Class<*>?
@@ -335,11 +393,34 @@ object KVMAndroid {
         }
         val fieldRef = i.reference as FieldReference
         val definingClass = fieldRef.definingClass
-        val kvmClass = dexClassesMap[definingClass]
+        val kvmClass = findKVMClass(definingClass)
         if (kvmClass == null) {
             // It's a system class, not an application class
             val systemClass = loadBootClassBySignature(definingClass)
-            TODO()
+            val field = systemClass.getDeclaredField(fieldRef.name)
+            field.isAccessible = true
+            when (accessType) {
+                AccessType.GET -> {
+                    // TODO: get others primitive types..
+                    val value = field.get(null)
+                    if (value != null && checkingType != null
+                        && !checkingType.isAssignableFrom(value.javaClass)
+                    ) {
+                        throw IllegalStateException("staticField to get from $systemClass is ${value.javaClass}, not assignable to $checkingType")
+                    }
+                    registers[i.registerA] = value
+                }
+                AccessType.SET -> {
+                    val value = registers[i.registerA]
+                    if (value != null && checkingType != null && !checkingType.isAssignableFrom(
+                            value.javaClass
+                        )
+                    ) {
+                        throw IllegalStateException("staticField to set into $systemClass is ${value.javaClass}, not assignable to $checkingType")
+                    }
+                    field.set(null, value)
+                }
+            }
         } else {
             ensureKvmClassInitialized(kvmClass)
             val staticFields = kvmClass.classDef.staticFields
@@ -347,20 +428,39 @@ object KVMAndroid {
                 it.name == fieldRef.name && it.type == fieldRef.type
             }
             if (field == null) {
-                throw NoSuchFieldError("found class but cannot find field: $field")
+                throw NoSuchFieldError("found kvm class but cannot find field: $field")
             }
             val index = staticFields.indexOf(field)
-            val value = kvmClass.classFields[index]
-            if (value != null && checkingType != null && checkingType.isAssignableFrom(value.javaClass)) {
-                throw IllegalStateException("staticField to get from ${kvmClass.classDef} is ${value.javaClass}, not assignable to $checkingType")
+            when (accessType) {
+                AccessType.GET -> {
+                    val value = kvmClass.classFields[index]
+                    if (value != null && checkingType != null && !checkingType.isAssignableFrom(
+                            value.javaClass
+                        )
+                    ) {
+                        throw IllegalStateException("staticField to get from ${kvmClass.classDef} is ${value.javaClass}, not assignable to $checkingType")
+                    }
+                    registers[i.registerA] = value
+                }
+                AccessType.SET -> {
+                    val value = registers[i.registerA]
+                    if (value != null && checkingType != null && !checkingType.isAssignableFrom(
+                            value.javaClass
+                        )
+                    ) {
+                        throw IllegalStateException("staticField to set into ${kvmClass.classDef} is ${value.javaClass}, not assignable to $checkingType")
+                    }
+                    kvmClass.classFields[index] = value
+                }
             }
-            registers[i.registerA] = value
         }
     }
 
     @Synchronized
     private fun ensureKvmClassInitialized(kvmClass: KVMClass) {
-        if (!kvmClass.classInitialized) {
+        if (kvmClass.classState == KVMClassState.UNBORN) {
+            // TODO: loading state lock
+            kvmClass.classState = KVMClassState.LOADING
             val classDef = kvmClass.classDef
             kvmClass.classFields = arrayOfNulls(classDef.staticFields.count())
             @Suppress("SpellCheckingInspection")
@@ -368,7 +468,7 @@ object KVMAndroid {
                 it.name == "<clinit>"
             } ?: throw BadByteCodeError("<clinit> not found: $classDef")
             invokeMethod(clinit, false, arrayOf())
-            kvmClass.classInitialized = true
+            kvmClass.classState = KVMClassState.LOADED
         }
     }
 
@@ -464,9 +564,11 @@ object KVMAndroid {
     @Suppress("ArrayInDataClass")
     data class KVMClass(
         val classDef: DexBackedClassDef,
-        var classInitialized: Boolean,
-        var classFields: Array<Any?>
+        var classFields: Array<Any?>,
+        var classState: KVMClassState = KVMClassState.UNBORN
     )
+
+    enum class KVMClassState { UNBORN, LOADING, LOADED }
 
     @Suppress("ArrayInDataClass")
     data class KVMInstance(
@@ -649,7 +751,18 @@ object KVMAndroid {
         return invokeMethod(method, needThisObj, invokeParams)
     }
 
-    private fun findDexClassDef(definingClass: String) = dexClassesMap[definingClass]?.classDef
+    private fun findKVMClass(definingClass: String): KVMClass? {
+        return if (definingClass == classToSignature(KVMAndroid::class.java)) {
+            // fake null
+            null
+        } else {
+            dexClassesMap[definingClass]
+        }
+    }
+
+    private fun findDexClassDef(definingClass: String): DexBackedClassDef? {
+        return findKVMClass(definingClass)?.classDef
+    }
 
 //    private fun dumpInstruction(instruction: Instruction?): String {
 //        instruction.runCatching { }

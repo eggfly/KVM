@@ -25,6 +25,7 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        TestJavaClass().foo()
         button.setOnClickListener {
             KVMAndroid.invoke(
                 classToSignature(MainActivity::class.java),
@@ -40,7 +41,7 @@ class MainActivity : AppCompatActivity() {
         KotlinTest.test()
         val result = KotlinTest.foo(-1, 5)
         Log.d(TAG, "" + result)
-        TestJavaClass.foo()
+        TestJavaClass().foo()
     }
 
     private fun test() {
