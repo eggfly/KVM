@@ -257,11 +257,15 @@ object KVMAndroid {
                 if (i.referenceType == ReferenceType.TYPE) {
                     val type = (i.reference as TypeReference).type
                     val dexClass = findDexClassDef(type)
+                    val value = registers[i.registerA]
                     if (dexClass == null) {
                         // system class
                         val systemClass = loadBootClassBySignature(type)
-                        val value = registers[i.registerA]
-                        systemClass.cast(value)
+                        if (value is KVMInstance) {
+                            // TODO: don't check
+                        } else {
+                            systemClass.cast(value)
+                        }
                     } else {
                         TODO()
                     }
@@ -752,7 +756,7 @@ object KVMAndroid {
     }
 
     private fun findKVMClass(definingClass: String): KVMClass? {
-        return if (definingClass == classToSignature(KVMAndroid::class.java)) {
+        return if (definingClass.startsWith(KVMAndroid::class.java.`package`!!.name)) {
             // fake null
             null
         } else {
