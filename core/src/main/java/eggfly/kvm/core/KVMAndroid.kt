@@ -258,14 +258,8 @@ object KVMAndroid {
                 val i = instruction as Instruction21c
                 if (i.referenceType == ReferenceType.TYPE) {
                     val type = (i.reference as TypeReference).type
-                    val dexClass = findDexClassDef(type)
-                    if (dexClass == null) {
-                        // system class
-                        val systemClass = loadClassBySignatureUsingClassLoader(type)
-                        registers[i.registerA] = systemClass
-                    } else {
-                        TODO()
-                    }
+                    val clazz = loadClassBySignatureUsingClassLoader(type)
+                    registers[i.registerA] = clazz
                 } else {
                     throw IllegalArgumentException("referenceType is not TYPE")
                 }
@@ -275,14 +269,9 @@ object KVMAndroid {
                 val i = instruction as Instruction21c
                 if (i.referenceType == ReferenceType.TYPE) {
                     val type = (i.reference as TypeReference).type
-                    val dexClass = findDexClassDef(type)
                     val value = registers[i.registerA]
-                    if (dexClass == null) {
-                        val clazz = loadClassBySignatureUsingClassLoader(type)
-                        clazz.cast(value)
-                    } else {
-                        TODO()
-                    }
+                    val clazz = loadClassBySignatureUsingClassLoader(type)
+                    clazz.cast(value)
                 } else {
                     throw IllegalArgumentException("referenceType is not TYPE")
                 }
@@ -411,66 +400,29 @@ object KVMAndroid {
         }
         val fieldRef = i.reference as FieldReference
         val definingClass = fieldRef.definingClass
-        val dexClass = findDexClassDef(definingClass)
-        if (dexClass == null) {
-            // It's a system class, not an application class
-            val systemClass = loadClassBySignatureUsingClassLoader(definingClass)
-            val field = systemClass.getDeclaredField(fieldRef.name)
-            field.isAccessible = true
-            when (accessType) {
-                AccessType.GET -> {
-                    // TODO: get others primitive types..
-                    val value = field.get(null)
-                    if (value != null && checkingType != null
-                        && !checkingType.isAssignableFrom(value.javaClass)
-                    ) {
-                        throw IllegalStateException("staticField to get from $systemClass is ${value.javaClass}, not assignable to $checkingType")
-                    }
-                    registers[i.registerA] = value
+        val clazz = loadClassBySignatureUsingClassLoader(definingClass)
+        val field = clazz.getDeclaredField(fieldRef.name)
+        field.isAccessible = true
+        when (accessType) {
+            AccessType.GET -> {
+                val value = field.get(null)
+                if (value != null && checkingType != null
+                    && !checkingType.isAssignableFrom(value.javaClass)
+                ) {
+                    throw IllegalStateException("staticField to get from $clazz is ${value.javaClass}, not assignable to $checkingType")
                 }
-                AccessType.SET -> {
-                    val value = registers[i.registerA]
-                    if (value != null && checkingType != null && !checkingType.isAssignableFrom(
-                            value.javaClass
-                        )
-                    ) {
-                        throw IllegalStateException("staticField to set into $systemClass is ${value.javaClass}, not assignable to $checkingType")
-                    }
-                    field.set(null, value)
+                registers[i.registerA] = value
+            }
+            AccessType.SET -> {
+                val value = registers[i.registerA]
+                if (value != null && checkingType != null && !checkingType.isAssignableFrom(
+                        value.javaClass
+                    )
+                ) {
+                    throw IllegalStateException("staticField to set into $clazz is ${value.javaClass}, not assignable to $checkingType")
                 }
+                field.set(null, value)
             }
-        } else {
-            val staticFields = dexClass.staticFields
-            val field = staticFields.firstOrNull {
-                it.name == fieldRef.name && it.type == fieldRef.type
-            }
-            if (field == null) {
-                throw NoSuchFieldError("found kvm class but cannot find field: $field")
-            }
-            val index = staticFields.indexOf(field)
-            TODO("using reflection")
-//            when (accessType) {
-//                AccessType.GET -> {
-//                    val value = dexClass.classFields[index]
-//                    if (value != null && checkingType != null && !checkingType.isAssignableFrom(
-//                            value.javaClass
-//                        )
-//                    ) {
-//                        throw IllegalStateException("staticField to get from ${dexClass.classDef} is ${value.javaClass}, not assignable to $checkingType")
-//                    }
-//                    registers[i.registerA] = value
-//                }
-//                AccessType.SET -> {
-//                    val value = registers[i.registerA]
-//                    if (value != null && checkingType != null && !checkingType.isAssignableFrom(
-//                            value.javaClass
-//                        )
-//                    ) {
-//                        throw IllegalStateException("staticField to set into ${dexClass.classDef} is ${value.javaClass}, not assignable to $checkingType")
-//                    }
-//                    dexClass.classFields[index] = value
-//                }
-//            }
         }
     }
 
