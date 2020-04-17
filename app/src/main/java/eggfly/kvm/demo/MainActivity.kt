@@ -1,5 +1,6 @@
 package eggfly.kvm.demo
 
+import android.annotation.SuppressLint
 import android.content.Context
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
@@ -14,6 +15,7 @@ import eggfly.kvm.core.DecryptFile
 import eggfly.kvm.core.KVMAndroid
 import eggfly.kvm.core.classToSignature
 import kotlinx.android.synthetic.main.activity_main.*
+import quickpatch.sdk.ReflectionBridge
 import java.io.File
 
 const val TAG = "MainActivity"
@@ -30,8 +32,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    @SuppressLint("MissingSuperCall")
     override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
+        ReflectionBridge.callSuperMethodNative(this, "onCreate", "(Landroid/os/Bundle;)V", arrayOf(savedInstanceState))
+        // super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         TestJavaClass().foo()
         button.setOnClickListener {
@@ -42,6 +46,7 @@ class MainActivity : AppCompatActivity() {
                 true,
                 arrayOf(this@MainActivity)
             )
+            KVMAndroid.dumpUsedOpCodes()
             // test()
         }
         // Example of a call to a native method
@@ -79,7 +84,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun test() {
         val t1 = KotlinTest.testTime()
-        val t2 = KVMAndroid.invokeTestMethodTime(KotlinTest, classToSignature(KotlinTest::class.java), "test")
+        val t2 = KVMAndroid.invokeTestMethodTime(
+            KotlinTest,
+            classToSignature(KotlinTest::class.java),
+            "test"
+        )
         Toast.makeText(this, "directly: $t1 ms\nmy interpreter: $t2 ms", Toast.LENGTH_LONG).show()
     }
 

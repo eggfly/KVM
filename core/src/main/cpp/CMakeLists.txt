@@ -25,6 +25,7 @@ add_library( # Sets the name of the library.
         #${dextool_srcs}
         #${dalvik_libdex_srcs}
         native-lib.cpp
+        quickpatch.cpp
         #dexinfo.c
         )
 

@@ -20,12 +20,21 @@ import org.jf.dexlib2.iface.reference.FieldReference
 import org.jf.dexlib2.iface.reference.MethodReference
 import org.jf.dexlib2.iface.reference.StringReference
 import org.jf.dexlib2.iface.reference.TypeReference
+import quickpatch.sdk.ReflectionBridge
 import java.io.File
 import java.util.*
+import kotlin.collections.LinkedHashSet
 
 object KVMAndroid {
     class Frame
     class StackFrame : Stack<Frame>()
+
+    private val usedOpCodes = LinkedHashSet<Opcode>()
+
+    fun dumpUsedOpCodes() {
+        val used = usedOpCodes
+        Log.w(TAG, "used opcodes: count=${used.size}, all:\n${used.joinToString("\n")}")
+    }
 
     private const val TAG = "KVMAndroid"
     private lateinit var dexClassesMap: Map<String, DexBackedClassDef>
@@ -344,6 +353,12 @@ object KVMAndroid {
                     handleInstruction35c(instruction, registers, true)
                 logV("INVOKE_VIRTUAL")
             }
+            // 0x6f
+            Opcode.INVOKE_SUPER -> {
+                interpreterState.invokeTempReturnValue =
+                    handleInstruction35c(instruction, registers, true)
+                logV("INVOKE_SUPER")
+            }
             // 0x70
             Opcode.INVOKE_DIRECT -> {
                 interpreterState.invokeTempReturnValue =
@@ -382,9 +397,11 @@ object KVMAndroid {
             else -> {
                 val msg = instructionToString(instruction) + " not supported yet"
                 logE(msg)
+                dumpUsedOpCodes()
                 throw NotImplementedError(msg)
             }
         }
+        usedOpCodes.add(instruction.opcode)
     }
 
     enum class AccessType { GET, SET }
@@ -547,9 +564,19 @@ object KVMAndroid {
             // static or virtual?
             // start to invoke, 山口山~!
             if (needThisObj) {
-                val firstParamIsThisObj = realParams[0]
+                val thisObj = realParams[0]
                 val realParamsWithoutFirst = realParams.sliceArray(1 until realParams.size)
-                method.invoke(firstParamIsThisObj, *realParamsWithoutFirst)
+                if (instruction.opcode == Opcode.INVOKE_SUPER) {
+                    // TODO: ()V is wrong
+                    ReflectionBridge.callSuperMethodNative(
+                        thisObj,
+                        methodRef.name,
+                        "()V",
+                        realParamsWithoutFirst
+                    )
+                } else {
+                    method.invoke(thisObj, *realParamsWithoutFirst)
+                }
             } else {
                 method.invoke(null, *realParams)
             }
