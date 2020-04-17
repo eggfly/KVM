@@ -21,8 +21,7 @@ class MyApp : Application() {
         Log.d(TAG, "onCreate")
 
         leet117()
-        KVMAndroid.init(this)
+        // KVMAndroid.init(this)
         // KVMAndroid.setup()
-
     }
 }

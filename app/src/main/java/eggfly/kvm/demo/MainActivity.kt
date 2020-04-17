@@ -10,9 +10,11 @@ import android.view.Menu
 import android.view.View
 import android.widget.Toast
 import eggfly.kvm.R
+import eggfly.kvm.core.DecryptFile
 import eggfly.kvm.core.KVMAndroid
 import eggfly.kvm.core.classToSignature
 import kotlinx.android.synthetic.main.activity_main.*
+import java.io.File
 
 const val TAG = "MainActivity"
 
@@ -77,12 +79,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun test() {
         val t1 = KotlinTest.testTime()
-        val t2 = KVMAndroid.invokeTestMethodTime()
+        val t2 = KVMAndroid.invokeTestMethodTime(KotlinTest, classToSignature(KotlinTest::class.java), "test")
         Toast.makeText(this, "directly: $t1 ms\nmy interpreter: $t2 ms", Toast.LENGTH_LONG).show()
     }
 
     override fun onResume() {
         super.onResume()
+        val encFile = File(filesDir, "encrypted.enc")
+        DecryptFile.main(encFile, this)
         test()
     }
 

@@ -1,6 +1,6 @@
 package eggfly.kvm.core
 
-fun loadBootClassBySignature(signature: String): Class<*> {
+fun loadClassBySignatureUsingClassLoader(signature: String): Class<*> {
     val className: String?
     when (signature[0]) {
         'L' -> className = signature.trimStart('L').trimEnd(';').replace('/', '.')
@@ -14,6 +14,7 @@ fun loadBootClassBySignature(signature: String): Class<*> {
         'V' -> return Void::class.java // ?
         else -> throw NotImplementedError(signature)
     }
+    // TODO check?
     return Thread.currentThread().contextClassLoader!!.loadClass(className)
 }
 

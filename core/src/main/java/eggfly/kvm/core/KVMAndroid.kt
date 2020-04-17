@@ -1,20 +1,19 @@
 package eggfly.kvm.core
 
-import android.content.Context
 import android.util.Log
+import eggfly.kvm.core.util.AppContext
+import eggfly.kvm.core.util.AssetsUtils
 import org.jf.dexlib2.DexFileFactory
 import org.jf.dexlib2.Opcode
 import org.jf.dexlib2.Opcodes
 import org.jf.dexlib2.ReferenceType
 import org.jf.dexlib2.dexbacked.DexBackedClassDef
-import org.jf.dexlib2.dexbacked.DexBackedDexFile
 import org.jf.dexlib2.dexbacked.DexBackedMethod
 import org.jf.dexlib2.dexbacked.DexReader
 import org.jf.dexlib2.dexbacked.instruction.DexBackedInstruction
 import org.jf.dexlib2.dexbacked.instruction.DexBackedInstruction21c
 import org.jf.dexlib2.dexbacked.instruction.DexBackedInstruction21t
 import org.jf.dexlib2.dexbacked.instruction.DexBackedInstruction22c
-import org.jf.dexlib2.iface.MultiDexContainer
 import org.jf.dexlib2.iface.instruction.Instruction
 import org.jf.dexlib2.iface.instruction.formats.*
 import org.jf.dexlib2.iface.reference.FieldReference
@@ -22,7 +21,6 @@ import org.jf.dexlib2.iface.reference.MethodReference
 import org.jf.dexlib2.iface.reference.StringReference
 import org.jf.dexlib2.iface.reference.TypeReference
 import java.io.File
-import java.lang.reflect.Constructor
 import java.util.*
 
 object KVMAndroid {
@@ -30,47 +28,68 @@ object KVMAndroid {
     class StackFrame : Stack<Frame>()
 
     private const val TAG = "KVMAndroid"
-    private lateinit var apk: MultiDexContainer<out DexBackedDexFile>
-    private lateinit var dexNames: MutableList<String>
-    private lateinit var dexClasses: List<DexBackedClassDef>
-    private lateinit var dexClassesMap: Map<String, KVMClass>
+    private lateinit var dexClassesMap: Map<String, DexBackedClassDef>
     private val threadLocalStackFrame = object : ThreadLocal<StackFrame>() {
         override fun initialValue(): StackFrame {
             return StackFrame()
         }
     }
 
+    @Volatile
+    private var initialized = false
+
     init {
         logV("init()")
+        tryInit()
     }
 
-    fun init(context: Context) {
-        val apkPath = context.packageCodePath
-        apk = DexFileFactory.loadDexContainer(File(apkPath), Opcodes.getDefault())
-        dexNames = apk.dexEntryNames
-        dexClasses = dexNames.map { dex ->
-            val entry = apk.getEntry(dex)
-            entry!!.classes
-        }.flatten()
-        dexClassesMap = dexClasses.map { it.type to KVMClass(it, arrayOf()) }.toMap()
+    @Synchronized
+    private fun tryInit() {
+        if (initialized) {
+            return
+        }
+        val context = AppContext.getApplicationUsingActivityThread()
+        if (context != null) {
+            val dex = File(context.filesDir, "code.dex")
+            if (AssetsUtils.exists(context, "code.dex")) {
+                AssetsUtils.copyAssets(context, "code.dex", dex)
+                val dexFile = DexFileFactory.loadDexFile(dex, Opcodes.getDefault())
+                dexClassesMap = dexFile.classes.map {
+                    it.type to it
+                }.toMap()
+                Log.i(TAG, "KVM initialized in real world")
+            } else {
+                val apkPath = context.packageCodePath
+                val apk = DexFileFactory.loadDexContainer(File(apkPath), Opcodes.getDefault())
+                val dexNames = apk.dexEntryNames
+                val dexClasses = dexNames.map { dex ->
+                    val entry = apk.getEntry(dex)
+                    entry!!.classes
+                }.flatten()
+                dexClassesMap = dexClasses.map { it.type to it }.toMap()
+                Log.i(TAG, "KVM initialized in simulation mode")
+            }
+            Log.i(TAG, "KVM initialized, class count: ${dexClassesMap.size}")
+            initialized = true
+        }
     }
 
     private fun getStackFrame(): StackFrame {
         return threadLocalStackFrame.get()!!
     }
 
-    private fun invokeTestMethod() {
+    private fun invokeTestMethod(thisObj: Any?, className: String, methodName: String) {
         @Suppress("SpellCheckingInspection")
-        val kotlinTestClass = findDexClassDef("Leggfly/kvm/KotlinTest;")
+        val kotlinTestClass = findDexClassDef(className)
         val testMethod = kotlinTestClass!!.methods.first {
             it.parameterNames.iterator()
 //                it.name == "foo" && it.parameters.size == 2 && it.parameterTypes[0] == "I" && it.parameterTypes[1] == "J"
 //                it.name == "foo2"
-            it.name == "test"
+            it.name == methodName
         }
         val newFrame = Frame()
         getStackFrame().push(newFrame)
-        val mockParams = arrayOf<Any?>(this)
+        val mockParams = arrayOf(thisObj)
         invokeMethod(testMethod, true, mockParams)
     }
 
@@ -242,7 +261,7 @@ object KVMAndroid {
                     val dexClass = findDexClassDef(type)
                     if (dexClass == null) {
                         // system class
-                        val systemClass = loadBootClassBySignature(type)
+                        val systemClass = loadClassBySignatureUsingClassLoader(type)
                         registers[i.registerA] = systemClass
                     } else {
                         TODO()
@@ -259,13 +278,8 @@ object KVMAndroid {
                     val dexClass = findDexClassDef(type)
                     val value = registers[i.registerA]
                     if (dexClass == null) {
-                        // system class
-                        val systemClass = loadBootClassBySignature(type)
-                        if (value is KVMInstance) {
-                            // TODO: don't check
-                        } else {
-                            systemClass.cast(value)
-                        }
+                        val clazz = loadClassBySignatureUsingClassLoader(type)
+                        clazz.cast(value)
                     } else {
                         TODO()
                     }
@@ -397,10 +411,10 @@ object KVMAndroid {
         }
         val fieldRef = i.reference as FieldReference
         val definingClass = fieldRef.definingClass
-        val kvmClass = findKVMClass(definingClass)
-        if (kvmClass == null) {
+        val dexClass = findDexClassDef(definingClass)
+        if (dexClass == null) {
             // It's a system class, not an application class
-            val systemClass = loadBootClassBySignature(definingClass)
+            val systemClass = loadClassBySignatureUsingClassLoader(definingClass)
             val field = systemClass.getDeclaredField(fieldRef.name)
             field.isAccessible = true
             when (accessType) {
@@ -426,8 +440,7 @@ object KVMAndroid {
                 }
             }
         } else {
-            ensureKvmClassInitialized(kvmClass)
-            val staticFields = kvmClass.classDef.staticFields
+            val staticFields = dexClass.staticFields
             val field = staticFields.firstOrNull {
                 it.name == fieldRef.name && it.type == fieldRef.type
             }
@@ -435,44 +448,29 @@ object KVMAndroid {
                 throw NoSuchFieldError("found kvm class but cannot find field: $field")
             }
             val index = staticFields.indexOf(field)
-            when (accessType) {
-                AccessType.GET -> {
-                    val value = kvmClass.classFields[index]
-                    if (value != null && checkingType != null && !checkingType.isAssignableFrom(
-                            value.javaClass
-                        )
-                    ) {
-                        throw IllegalStateException("staticField to get from ${kvmClass.classDef} is ${value.javaClass}, not assignable to $checkingType")
-                    }
-                    registers[i.registerA] = value
-                }
-                AccessType.SET -> {
-                    val value = registers[i.registerA]
-                    if (value != null && checkingType != null && !checkingType.isAssignableFrom(
-                            value.javaClass
-                        )
-                    ) {
-                        throw IllegalStateException("staticField to set into ${kvmClass.classDef} is ${value.javaClass}, not assignable to $checkingType")
-                    }
-                    kvmClass.classFields[index] = value
-                }
-            }
-        }
-    }
-
-    @Synchronized
-    private fun ensureKvmClassInitialized(kvmClass: KVMClass) {
-        if (kvmClass.classState == KVMClassState.UNBORN) {
-            // TODO: loading state lock
-            kvmClass.classState = KVMClassState.LOADING
-            val classDef = kvmClass.classDef
-            kvmClass.classFields = arrayOfNulls(classDef.staticFields.count())
-            @Suppress("SpellCheckingInspection")
-            val clinit = classDef.directMethods.firstOrNull {
-                it.name == "<clinit>"
-            } ?: throw BadByteCodeError("<clinit> not found: $classDef")
-            invokeMethod(clinit, false, arrayOf())
-            kvmClass.classState = KVMClassState.LOADED
+            TODO("using reflection")
+//            when (accessType) {
+//                AccessType.GET -> {
+//                    val value = dexClass.classFields[index]
+//                    if (value != null && checkingType != null && !checkingType.isAssignableFrom(
+//                            value.javaClass
+//                        )
+//                    ) {
+//                        throw IllegalStateException("staticField to get from ${dexClass.classDef} is ${value.javaClass}, not assignable to $checkingType")
+//                    }
+//                    registers[i.registerA] = value
+//                }
+//                AccessType.SET -> {
+//                    val value = registers[i.registerA]
+//                    if (value != null && checkingType != null && !checkingType.isAssignableFrom(
+//                            value.javaClass
+//                        )
+//                    ) {
+//                        throw IllegalStateException("staticField to set into ${dexClass.classDef} is ${value.javaClass}, not assignable to $checkingType")
+//                    }
+//                    dexClass.classFields[index] = value
+//                }
+//            }
         }
     }
 
@@ -489,33 +487,17 @@ object KVMAndroid {
         }
         val fieldRef = i.reference as FieldReference
         val definingClass = fieldRef.definingClass
-        val dexClass = findDexClassDef(definingClass)
-        if (dexClass == null) {
-            // It's a system class, not an application class
-            val systemClass = loadBootClassBySignature(definingClass)
-            TODO()
-        } else {
-            if (targetObject !is KVMInstance) {
-                throw IllegalStateException("not a KVMInstance instance")
-            }
-            val instanceFields = dexClass.instanceFields
-            val field = instanceFields.first {
-                it.name == fieldRef.name && it.type == fieldRef.type
-            }
-            if (field == null) {
-                throw NoSuchFieldError("found class but cannot find field: $field")
-            }
-            val index = instanceFields.indexOf(field)
-            val fieldValue = targetObject.instanceFields[index]
-            logV("" + index + "" + field.fieldIndex + ", value=" + fieldValue)
-            if (fieldValue != null && checkingType != null && !checkingType.isAssignableFrom(
-                    fieldValue.javaClass
-                )
-            ) {
-                throw IllegalStateException("fieldValue to get from $targetObject is ${fieldValue.javaClass}, not assignable to $checkingType")
-            }
-            registers[i.registerA] = fieldValue
+
+        val clazz = loadClassBySignatureUsingClassLoader(definingClass)
+        val field = clazz.getDeclaredField(fieldRef.name)
+        val fieldValue = field.get(targetObject)
+        if (fieldValue != null && checkingType != null && !checkingType.isAssignableFrom(
+                fieldValue.javaClass
+            )
+        ) {
+            throw IllegalStateException("fieldValue to get from $targetObject is ${fieldValue.javaClass}, not assignable to $checkingType")
         }
+        registers[i.registerA] = fieldValue
     }
 
     private fun setInstanceFieldWithCheck(
@@ -533,25 +515,21 @@ object KVMAndroid {
         }
         val fieldRef = i.reference as FieldReference
         val definingClass = fieldRef.definingClass
-        val dexClass = findDexClassDef(definingClass)
-        if (dexClass == null) {
-            // It's a system class, not an application class
-            val systemClass = loadBootClassBySignature(definingClass)
-            TODO()
-        } else {
-            if (targetObject !is KVMInstance) {
-                throw IllegalStateException("not a KVMInstance instance")
+
+        val clazz = loadClassBySignatureUsingClassLoader(definingClass)
+        val field = clazz.getDeclaredField(fieldRef.name)
+        when (field.type) {
+            Boolean::class.java -> field.setBoolean(targetObject, fieldValue as Boolean)
+            Byte::class.java -> field.setByte(targetObject, fieldValue as Byte)
+            Int::class.java -> field.setInt(targetObject, fieldValue as Int)
+            Long::class.java -> {
+                val a = (fieldValue as Long)
+                field.setLong(targetObject, a)
+                println("setLong")
             }
-            val instanceFields = dexClass.instanceFields
-            val field = instanceFields.first {
-                it.name == fieldRef.name && it.type == fieldRef.type
-            }
-            if (field == null) {
-                throw NoSuchFieldError("found class but cannot find field: $field")
-            } else {
-                val index = instanceFields.indexOf(field)
-                logV("" + index + "" + field.fieldIndex)
-                targetObject.instanceFields[index] = fieldValue
+            else -> {
+                field.set(targetObject, fieldValue)
+                println("setObject")
             }
         }
     }
@@ -565,42 +543,15 @@ object KVMAndroid {
     object LazyInitializeSystemClassInstance
 
 
-    @Suppress("ArrayInDataClass")
-    data class KVMClass(
-        val classDef: DexBackedClassDef,
-        var classFields: Array<Any?>,
-        var classState: KVMClassState = KVMClassState.UNBORN
-    )
-
     enum class KVMClassState { UNBORN, LOADING, LOADED }
-
-    @Suppress("ArrayInDataClass")
-    data class KVMInstance(
-        val classDef: DexBackedClassDef,
-        var initCalled: Boolean = false,
-        val instanceFields: Array<Any?>
-    ) {
-        constructor(classDef: DexBackedClassDef) : this(
-            classDef,
-            false,
-            arrayOfNulls(classDef.instanceFields.count())
-        )
-    }
 
     private fun handleNewInstanceInstruction(instruction: Instruction21c): Any {
         return if (instruction.referenceType == ReferenceType.TYPE) {
             val type = (instruction.reference as TypeReference).type
             logV("NEW_INSTANCE: $type")
-            val dexClass = findDexClassDef(type)
-            if (dexClass == null) {
-                // It's a system class, not an application class
-                val systemClass = loadBootClassBySignature(type)
-                logV("NEW_INSTANCE instruction: lazy handle system class: $systemClass")
-                LazyInitializeSystemClassInstance
-            } else {
-                logV("NEW_INSTANCE instruction: lazy handle program class: $dexClass")
-                KVMInstance(dexClass)
-            }
+            val clazz = loadClassBySignatureUsingClassLoader(type)
+            logV("NEW_INSTANCE instruction: lazy handle class: $clazz")
+            LazyInitializeSystemClassInstance
         } else {
             throw IllegalArgumentException("referenceType is not TYPE")
         }
@@ -616,54 +567,40 @@ object KVMAndroid {
         needThisObj: Boolean
     ): Any? {
         val i = instruction as Instruction35c
-        if (i.referenceType == ReferenceType.METHOD) {
-            val methodRef = i.reference as MethodReference
-            val definingClass = methodRef.definingClass
-            val dexClass = findDexClassDef(definingClass)
-            if (dexClass == null) {
-                // It's a system class, not an application class
-                val systemClass = loadBootClassBySignature(definingClass)
-                // TODO: 参数遇到非boot class需要处理(可能没有这个情况，除非boot class有问题)
-                val parameterTypes = convertToTypes(methodRef.parameterTypes)
-                val invokeParams = parametersFromRegister(i, registers)
-                val realParams = remove64BitPlaceHolders(invokeParams)
-                return if ("<init>" == methodRef.name) {
-                    // must be invoke-direct here, and must after a new-instance?
-                    val constructor = systemClass.getConstructor(*parameterTypes)
-                    constructor.isAccessible = true
-                    val realParamsWithoutFirst = realParams.sliceArray(1 until realParams.size)
-                    val newObj = constructor.newInstance(*realParamsWithoutFirst)
-                    // new java.lang.Object() maybe no use here
-                    if (registers[i.registerC] is LazyInitializeSystemClassInstance) {
-                        // replace LazyInitializeSystemClassInstance to the real system class object
-                        registers[i.registerC] = newObj
-                    }
-                    newObj
-                } else {
-                    val method = systemClass.getDeclaredMethod(methodRef.name, *parameterTypes)
-                    logV("" + method)
-                    // static or virtual?
-                    // start to invoke, 山口山~!
-                    if (needThisObj) {
-                        val firstParamIsThisObj = realParams[0]
-                        val realParamsWithoutFirst = realParams.sliceArray(1 until realParams.size)
-                        method.invoke(firstParamIsThisObj, *realParamsWithoutFirst)
-                    } else {
-                        method.invoke(null, *realParams)
-                    }
-                }
-            } else {
-                val method = dexClass.methods.firstOrNull {
-                    it.name == methodRef.name && it.parameterTypes == methodRef.parameterTypes
-                }
-                if (method == null) {
-                    throw NoSuchMethodError("found class but cannot find method: $method")
-                }
-                val invokeParams = parametersFromRegister(i, registers)
-                return invokeMethod(method, needThisObj, invokeParams)
-            }
-        } else {
+        if (i.referenceType != ReferenceType.METHOD) {
             throw IllegalArgumentException("referenceType is not METHOD")
+        }
+        val methodRef = i.reference as MethodReference
+        val definingClass = methodRef.definingClass
+        val clazz = loadClassBySignatureUsingClassLoader(definingClass)
+        val parameterTypes = convertToTypes(methodRef.parameterTypes)
+        val invokeParams = parametersFromRegister(i, registers)
+        val realParams = remove64BitPlaceHolders(invokeParams)
+        return if ("<init>" == methodRef.name) {
+            // must be invoke-direct here, and must after a new-instance?
+            val constructor = clazz.getConstructor(*parameterTypes)
+            constructor.isAccessible = true
+            val realParamsWithoutFirst = realParams.sliceArray(1 until realParams.size)
+            val newObj = constructor.newInstance(*realParamsWithoutFirst)
+            // new java.lang.Object() maybe no use here
+            if (registers[i.registerC] is LazyInitializeSystemClassInstance) {
+                // replace LazyInitializeSystemClassInstance to the real system class object
+                registers[i.registerC] = newObj
+            }
+            newObj
+        } else {
+            val method = clazz.getDeclaredMethod(methodRef.name, *parameterTypes)
+            method.isAccessible = true
+            logV("" + method)
+            // static or virtual?
+            // start to invoke, 山口山~!
+            if (needThisObj) {
+                val firstParamIsThisObj = realParams[0]
+                val realParamsWithoutFirst = realParams.sliceArray(1 until realParams.size)
+                method.invoke(firstParamIsThisObj, *realParamsWithoutFirst)
+            } else {
+                method.invoke(null, *realParams)
+            }
         }
     }
 
@@ -695,7 +632,7 @@ object KVMAndroid {
 
     private fun convertToTypes(parameterTypes: List<CharSequence>): Array<Class<*>?> {
         return parameterTypes.map { type ->
-            loadBootClassBySignature(type.toString())
+            loadClassBySignatureUsingClassLoader(type.toString())
         }.toTypedArray()
     }
 
@@ -712,10 +649,10 @@ object KVMAndroid {
         // Log.v(TAG, msg)
     }
 
-    fun invokeTestMethodTime(): Long {
+    fun invokeTestMethodTime(thisObj: Any?, className: String, methodName: String): Long {
         return try {
             val startTime = System.currentTimeMillis()
-            invokeTestMethod()
+            invokeTestMethod(thisObj, className, methodName)
             val timeDelta = System.currentTimeMillis() - startTime
             Log.d(TAG, "It costs $timeDelta ms to run test() method by my interpreter.")
             timeDelta
@@ -740,7 +677,7 @@ object KVMAndroid {
     fun invoke(
         className: String,
         methodName: String,
-        parameterTypes: List<String>,
+        parameterTypes: List<String>?,
         needThisObj: Boolean,
         invokeParams: Array<Any?>
     ): Any? {
@@ -755,17 +692,13 @@ object KVMAndroid {
         return invokeMethod(method, needThisObj, invokeParams)
     }
 
-    private fun findKVMClass(definingClass: String): KVMClass? {
+    private fun findDexClassDef(definingClass: String): DexBackedClassDef? {
         return if (definingClass.startsWith(KVMAndroid::class.java.`package`!!.name)) {
             // fake null
             null
         } else {
             dexClassesMap[definingClass]
         }
-    }
-
-    private fun findDexClassDef(definingClass: String): DexBackedClassDef? {
-        return findKVMClass(definingClass)?.classDef
     }
 
 //    private fun dumpInstruction(instruction: Instruction?): String {
