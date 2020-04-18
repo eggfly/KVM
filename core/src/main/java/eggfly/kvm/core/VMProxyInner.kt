@@ -8,7 +8,7 @@ object VMProxyInner {
         methodName: String,
         argTypes: Array<Class<*>>?,
         isStatic: Boolean,
-        thisObject: Any,
+        thisObject: Any?,
         args: Array<Any?>
     ): Any? {
         val myArgs: Array<Any?>

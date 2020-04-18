@@ -3,6 +3,7 @@ package eggfly.kvm.core
 import android.util.Log
 import eggfly.kvm.core.util.AppContext
 import eggfly.kvm.core.util.AssetsUtils
+import eggfly.kvm.core.util.JavaUtils
 import org.jf.dexlib2.DexFileFactory
 import org.jf.dexlib2.Opcode
 import org.jf.dexlib2.Opcodes
@@ -10,10 +11,7 @@ import org.jf.dexlib2.ReferenceType
 import org.jf.dexlib2.dexbacked.DexBackedClassDef
 import org.jf.dexlib2.dexbacked.DexBackedMethod
 import org.jf.dexlib2.dexbacked.DexReader
-import org.jf.dexlib2.dexbacked.instruction.DexBackedInstruction
-import org.jf.dexlib2.dexbacked.instruction.DexBackedInstruction21c
-import org.jf.dexlib2.dexbacked.instruction.DexBackedInstruction21t
-import org.jf.dexlib2.dexbacked.instruction.DexBackedInstruction22c
+import org.jf.dexlib2.dexbacked.instruction.*
 import org.jf.dexlib2.iface.instruction.Instruction
 import org.jf.dexlib2.iface.instruction.formats.*
 import org.jf.dexlib2.iface.reference.FieldReference
@@ -158,6 +156,7 @@ object KVMAndroid {
 
     object VoidReturnValue
 
+    @Suppress("SpellCheckingInspection")
     private fun interpretInstruction(
         reader: DexReader,
         instruction: DexBackedInstruction,
@@ -292,6 +291,19 @@ object KVMAndroid {
                 val embryoInstance = handleNewInstanceInstruction(i)
                 registers[i.registerA] = embryoInstance
             }
+            // 0x23
+            Opcode.NEW_ARRAY -> {
+                val i = instruction as Instruction22c
+                val newArrayObj = handleNewArray(i, registers)
+                registers[i.registerA] = newArrayObj
+            }
+            // 0x23
+            Opcode.FILLED_NEW_ARRAY -> {
+                val i = instruction as Instruction35c
+                i.registerCount
+                val newArrayObj = handleNewArray(i, registers)
+                registers[i.registerA] = newArrayObj
+            }
             // 0x31
             Opcode.CMP_LONG -> {
                 val i = instruction as Instruction23x
@@ -316,6 +328,15 @@ object KVMAndroid {
                         DexBackedInstruction.readFrom(reader) as DexBackedInstruction
                     logV("IF_NEZ: " + interpreterState.jumpInstruction)
                 }
+            }
+            // 0x4b
+            Opcode.APUT -> {
+                val i = instruction as DexBackedInstruction23x
+                val value = registers[i.registerA]
+                val array = registers[i.registerB]
+                val index = registers[i.registerC] as Int
+                JavaUtils.arraySet(array, index, value)
+                logV("APUT")
             }
             // 0x54
             Opcode.IGET_OBJECT -> {
@@ -512,8 +533,6 @@ object KVMAndroid {
     object LazyInitializeSystemClassInstance
 
 
-    enum class KVMClassState { UNBORN, LOADING, LOADED }
-
     private fun handleNewInstanceInstruction(instruction: Instruction21c): Any {
         return if (instruction.referenceType == ReferenceType.TYPE) {
             val type = (instruction.reference as TypeReference).type
@@ -521,6 +540,29 @@ object KVMAndroid {
             val clazz = loadClassBySignatureUsingClassLoader(type)
             logV("NEW_INSTANCE instruction: lazy handle class: $clazz")
             LazyInitializeSystemClassInstance
+        } else {
+            throw IllegalArgumentException("referenceType is not TYPE")
+        }
+    }
+
+    private fun handleNewArray(
+        instruction: Instruction22c,
+        registers: Array<Any?>
+    ): Any {
+        return if (instruction.referenceType == ReferenceType.TYPE) {
+            val type = (instruction.reference as TypeReference).type
+            logV("NEW_ARRAY: $type")
+            val dimensionCount = type.lastIndexOf('[') + 1
+            if (dimensionCount <= 0) {
+                throw IllegalArgumentException("$type is not an array?")
+            }
+            val innerType = type.substring(dimensionCount)
+            val clazz = loadClassBySignatureUsingClassLoader(innerType)
+            val arrayOuterLength = registers[instruction.registerB] as Int
+            val dimensions = IntArray(dimensionCount)
+            dimensions[0] = arrayOuterLength
+            val newArray = java.lang.reflect.Array.newInstance(clazz, *dimensions)
+            newArray
         } else {
             throw IllegalArgumentException("referenceType is not TYPE")
         }
@@ -567,11 +609,10 @@ object KVMAndroid {
                 val thisObj = realParams[0]
                 val realParamsWithoutFirst = realParams.sliceArray(1 until realParams.size)
                 if (instruction.opcode == Opcode.INVOKE_SUPER) {
-                    // TODO: ()V is wrong
                     ReflectionBridge.callSuperMethodNative(
                         thisObj,
                         methodRef.name,
-                        "()V",
+                        getMethodSignature(methodRef),
                         realParamsWithoutFirst
                     )
                 } else {
@@ -582,6 +623,9 @@ object KVMAndroid {
             }
         }
     }
+
+    private fun getMethodSignature(methodRef: MethodReference): String =
+        "(" + methodRef.parameterTypes.joinToString("") + ")" + methodRef.returnType
 
     private fun remove64BitPlaceHolders(invokeParams: Array<Any?>) =
         invokeParams.filter { it != SecondSlotPlaceHolderOf64BitValue }.toTypedArray()

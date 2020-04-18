@@ -1,6 +1,7 @@
 package eggfly.kvm.demo
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.content.Context
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
@@ -14,6 +15,7 @@ import eggfly.kvm.R
 import eggfly.kvm.core.DecryptFile
 import eggfly.kvm.core.KVMAndroid
 import eggfly.kvm.core.classToSignature
+import eggfly.kvm.demo.util.JavaUtils
 import kotlinx.android.synthetic.main.activity_main.*
 import quickpatch.sdk.ReflectionBridge
 import java.io.File
@@ -34,7 +36,12 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("MissingSuperCall")
     override fun onCreate(savedInstanceState: Bundle?) {
-        ReflectionBridge.callSuperMethodNative(this, "onCreate", "(Landroid/os/Bundle;)V", arrayOf(savedInstanceState))
+        ReflectionBridge.callSuperMethodNative(
+            this,
+            "onCreate",
+            "(Landroid/os/Bundle;)V",
+            arrayOf(savedInstanceState)
+        )
         // super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         TestJavaClass().foo()
@@ -89,6 +96,10 @@ class MainActivity : AppCompatActivity() {
             classToSignature(KotlinTest::class.java),
             "test"
         )
+        arrayOf<Array<Array<Int>>>()
+        intArrayOf(8)
+        arrayOfNulls<Activity>(9)
+        arrayOfNulls<Array<Int>>(9)
         Toast.makeText(this, "directly: $t1 ms\nmy interpreter: $t2 ms", Toast.LENGTH_LONG).show()
     }
 
