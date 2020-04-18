@@ -12,9 +12,10 @@ fun loadClassBySignatureUsingClassLoader(signature: String): Class<*> {
         'F' -> return Float::class.java
         'D' -> return Double::class.java
         'V' -> return Void::class.java // ?
+        '[' -> return Class.forName(signature.replace('/', '.'))
         else -> throw NotImplementedError(signature)
     }
-    // TODO check?
+    // TODO use thread class loader or Class.forName()?
     return Thread.currentThread().contextClassLoader!!.loadClass(className)
 }
 

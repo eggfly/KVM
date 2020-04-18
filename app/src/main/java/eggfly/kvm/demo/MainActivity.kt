@@ -3,7 +3,6 @@ package eggfly.kvm.demo
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
-import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.os.PersistableBundle
 import android.util.AttributeSet
@@ -11,11 +10,11 @@ import android.util.Log
 import android.view.Menu
 import android.view.View
 import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
 import eggfly.kvm.R
 import eggfly.kvm.core.DecryptFile
 import eggfly.kvm.core.KVMAndroid
 import eggfly.kvm.core.classToSignature
-import eggfly.kvm.demo.util.JavaUtils
 import kotlinx.android.synthetic.main.activity_main.*
 import quickpatch.sdk.ReflectionBridge
 import java.io.File
@@ -46,6 +45,10 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
         TestJavaClass().foo()
         button.setOnClickListener {
+            val aa = Class.forName("[[I")
+            val stringArrayClass =
+                Class.forName("[Ljava.lang.String;")
+
             KVMAndroid.invoke(
                 classToSignature(MainActivity::class.java),
                 "test",
@@ -98,6 +101,7 @@ class MainActivity : AppCompatActivity() {
         )
         arrayOf<Array<Array<Int>>>()
         intArrayOf(8)
+        Array(5) { Array(2) { IntArray(4) } }
         arrayOfNulls<Activity>(9)
         arrayOfNulls<Array<Int>>(9)
         Toast.makeText(this, "directly: $t1 ms\nmy interpreter: $t2 ms", Toast.LENGTH_LONG).show()

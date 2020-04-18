@@ -151,7 +151,7 @@ object KVMAndroid {
         var jumpInstruction: DexBackedInstruction?,
         var returned: Boolean,
         var returnValue: Any?,
-        var invokeTempReturnValue: Any?
+        var tempResultObject: Any?
     )
 
     object VoidReturnValue
@@ -169,6 +169,11 @@ object KVMAndroid {
             Opcode.NOP -> {
                 instruction as Instruction10x
             }
+            // 0x01
+            Opcode.MOVE -> {
+                val i = instruction as Instruction12x
+                registers[i.registerA] = registers[i.registerB]
+            }
             // 0x07
             Opcode.MOVE_OBJECT -> {
                 val i = instruction as Instruction12x
@@ -178,15 +183,15 @@ object KVMAndroid {
             // 0x0b
             Opcode.MOVE_RESULT_WIDE -> {
                 val i = instruction as Instruction11x
-                registers[i.registerA] = interpreterState.invokeTempReturnValue
+                registers[i.registerA] = interpreterState.tempResultObject
                 registers[i.registerA + 1] = SecondSlotPlaceHolderOf64BitValue
-                logV("MOVE_RESULT_WIDE:${interpreterState.invokeTempReturnValue}")
+                logV("MOVE_RESULT_WIDE:${interpreterState.tempResultObject}")
             }
             // 0x0c
             Opcode.MOVE_RESULT_OBJECT -> {
                 val i = instruction as Instruction11x
-                registers[i.registerA] = interpreterState.invokeTempReturnValue
-                logV("MOVE_RESULT_OBJECT:${interpreterState.invokeTempReturnValue}")
+                registers[i.registerA] = interpreterState.tempResultObject
+                logV("MOVE_RESULT_OBJECT:${interpreterState.tempResultObject}")
             }
             // 0x0e
             Opcode.RETURN_VOID -> {
@@ -297,12 +302,18 @@ object KVMAndroid {
                 val newArrayObj = handleNewArray(i, registers)
                 registers[i.registerA] = newArrayObj
             }
-            // 0x23
+            // 0x24
             Opcode.FILLED_NEW_ARRAY -> {
                 val i = instruction as Instruction35c
-                i.registerCount
-                val newArrayObj = handleNewArray(i, registers)
-                registers[i.registerA] = newArrayObj
+                val newArrayObj = handleFilledNewArray(i, registers)
+                interpreterState.tempResultObject = newArrayObj
+            }
+            // 0x28
+            Opcode.GOTO -> {
+                val i = instruction as DexBackedInstruction10t
+                reader.offset = i.instructionStart + i.codeOffset * 2
+                interpreterState.jumpInstruction =
+                    DexBackedInstruction.readFrom(reader) as DexBackedInstruction
             }
             // 0x31
             Opcode.CMP_LONG -> {
@@ -311,6 +322,18 @@ object KVMAndroid {
                 val value2 = registers[i.registerC] as Long
                 registers[i.registerA] = value1.compareTo(value2)
                 logV("" + i)
+            }
+            // 0x35
+            Opcode.IF_GE -> {
+                val i = instruction as DexBackedInstruction22t
+                val value1 = registers[i.registerA] as Int
+                val value2 = registers[i.registerB] as Int
+                if (value1 >= value2) {
+                    reader.offset = i.instructionStart + i.codeOffset * 2
+                    interpreterState.jumpInstruction =
+                        DexBackedInstruction.readFrom(reader) as DexBackedInstruction
+                    logV("IF_GE: " + interpreterState.jumpInstruction)
+                }
             }
             // 0x39
             Opcode.IF_NEZ -> {
@@ -329,14 +352,19 @@ object KVMAndroid {
                     logV("IF_NEZ: " + interpreterState.jumpInstruction)
                 }
             }
-            // 0x4b
-            Opcode.APUT -> {
+            // 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 0x50, 0x51,
+            Opcode.APUT,
+            Opcode.APUT_WIDE,
+            Opcode.APUT_OBJECT,
+            Opcode.APUT_BOOLEAN,
+            Opcode.APUT_BYTE,
+            Opcode.APUT_CHAR,
+            Opcode.APUT_SHORT -> {
                 val i = instruction as DexBackedInstruction23x
                 val value = registers[i.registerA]
                 val array = registers[i.registerB]
                 val index = registers[i.registerC] as Int
                 JavaUtils.arraySet(array, index, value)
-                logV("APUT")
             }
             // 0x54
             Opcode.IGET_OBJECT -> {
@@ -370,25 +398,25 @@ object KVMAndroid {
             }
             // 0x6e
             Opcode.INVOKE_VIRTUAL -> {
-                interpreterState.invokeTempReturnValue =
+                interpreterState.tempResultObject =
                     handleInstruction35c(instruction, registers, true)
                 logV("INVOKE_VIRTUAL")
             }
             // 0x6f
             Opcode.INVOKE_SUPER -> {
-                interpreterState.invokeTempReturnValue =
+                interpreterState.tempResultObject =
                     handleInstruction35c(instruction, registers, true)
                 logV("INVOKE_SUPER")
             }
             // 0x70
             Opcode.INVOKE_DIRECT -> {
-                interpreterState.invokeTempReturnValue =
+                interpreterState.tempResultObject =
                     handleInstruction35c(instruction, registers, true)
                 logV("INVOKE_DIRECT")
             }
             // 0x71
             Opcode.INVOKE_STATIC -> {
-                interpreterState.invokeTempReturnValue =
+                interpreterState.tempResultObject =
                     handleInstruction35c(instruction, registers, false)
                 logV("INVOKE_STATIC")
             }
@@ -414,6 +442,16 @@ object KVMAndroid {
                 val targetValue = registers[i.registerA] as Long - srcValue
                 registers[i.registerA] = targetValue
                 registers[i.registerA + 1] = SecondSlotPlaceHolderOf64BitValue
+            }
+            // 0xd0
+            Opcode.ADD_INT_LIT16 -> {
+                val i = instruction as Instruction22s
+                registers[i.registerA] = registers[i.registerB] as Int + i.narrowLiteral
+            }
+            // 0xd8
+            Opcode.ADD_INT_LIT8 -> {
+                val i = instruction as Instruction22b
+                registers[i.registerA] = registers[i.registerB] as Int + i.narrowLiteral
             }
             else -> {
                 val msg = instructionToString(instruction) + " not supported yet"
@@ -549,23 +587,43 @@ object KVMAndroid {
         instruction: Instruction22c,
         registers: Array<Any?>
     ): Any {
-        return if (instruction.referenceType == ReferenceType.TYPE) {
-            val type = (instruction.reference as TypeReference).type
-            logV("NEW_ARRAY: $type")
-            val dimensionCount = type.lastIndexOf('[') + 1
-            if (dimensionCount <= 0) {
-                throw IllegalArgumentException("$type is not an array?")
-            }
-            val innerType = type.substring(dimensionCount)
-            val clazz = loadClassBySignatureUsingClassLoader(innerType)
-            val arrayOuterLength = registers[instruction.registerB] as Int
-            val dimensions = IntArray(dimensionCount)
-            dimensions[0] = arrayOuterLength
-            val newArray = java.lang.reflect.Array.newInstance(clazz, *dimensions)
-            newArray
-        } else {
+        if (instruction.referenceType != ReferenceType.TYPE) {
             throw IllegalArgumentException("referenceType is not TYPE")
         }
+        val type = (instruction.reference as TypeReference).type
+        logV("NEW_ARRAY: $type")
+        val dimensionCount = type.lastIndexOf('[') + 1
+        if (dimensionCount <= 0) {
+            throw IllegalArgumentException("$type is not an array?")
+        }
+        val innerType = type.substring(dimensionCount)
+        val clazz = loadClassBySignatureUsingClassLoader(innerType)
+        val arrayOuterLength = registers[instruction.registerB] as Int
+        val dimensions = IntArray(dimensionCount)
+        dimensions[0] = arrayOuterLength
+        return java.lang.reflect.Array.newInstance(clazz, *dimensions)
+    }
+
+    private fun handleFilledNewArray(
+        instruction: Instruction35c,
+        registers: Array<Any?>
+    ): Any {
+        if (instruction.referenceType != ReferenceType.TYPE) {
+            throw IllegalArgumentException("referenceType is not TYPE")
+        }
+        val type = (instruction.reference as TypeReference).type
+        logV("FILLED_NEW_ARRAY: $type")
+        val dimensionCount = type.lastIndexOf('[') + 1
+        if (dimensionCount <= 0) {
+            throw IllegalArgumentException("$type is not an array?")
+        }
+        val innerType = type.substring(dimensionCount)
+        val clazz = loadClassBySignatureUsingClassLoader(innerType)
+//        val arrayOuterLength = registers[instruction.registerB] as Int
+//        val dimensions = IntArray(dimensionCount)
+//        dimensions[0] = arrayOuterLength
+//        return java.lang.reflect.Array.newInstance(clazz, *dimensions)
+        return Any()
     }
 
     private fun logE(msg: String) {
