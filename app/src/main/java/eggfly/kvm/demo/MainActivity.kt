@@ -113,6 +113,8 @@ class MainActivity : AppCompatActivity() {
         builder.appendln(doubleValue)
         Toast.makeText(this, "directly: $t1 ms\nmy interpreter: $t2 ms", Toast.LENGTH_LONG).show()
         Log.d(TAG, builder.toString())
+        // println(Int::javaClass) // this cause kotlin compiler error  
+        println(Int::class.java)
     }
 
     override fun onResume() {

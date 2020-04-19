@@ -3,6 +3,7 @@ package eggfly.kvm.core
 import android.util.Log
 import eggfly.kvm.core.util.AppContext
 import eggfly.kvm.core.util.AssetsUtils
+import eggfly.kvm.core.util.JavaTypes
 import eggfly.kvm.core.util.JavaUtils
 import org.jf.dexlib2.DexFileFactory
 import org.jf.dexlib2.Opcode
@@ -23,6 +24,7 @@ import quickpatch.sdk.ReflectionBridge
 import java.io.File
 import java.lang.reflect.Method
 import java.util.*
+import kotlin.collections.ArrayList
 import kotlin.collections.LinkedHashSet
 
 object KVMAndroid {
@@ -71,8 +73,8 @@ object KVMAndroid {
                 val apkPath = context.packageCodePath
                 val apk = DexFileFactory.loadDexContainer(File(apkPath), Opcodes.getDefault())
                 val dexNames = apk.dexEntryNames
-                val dexClasses = dexNames.map { dex ->
-                    val entry = apk.getEntry(dex)
+                val dexClasses = dexNames.map { dexName ->
+                    val entry = apk.getEntry(dexName)
                     entry!!.classes
                 }.flatten()
                 dexClassesMap = dexClasses.map { it.type to it }.toMap()
@@ -122,11 +124,12 @@ object KVMAndroid {
         val parameterCountBy32BitsWithoutThisObj = calculate32BitCount(method.parameterTypes)
         val parameterCount =
             if (needThisObj) parameterCountBy32BitsWithoutThisObj + 1 else parameterCountBy32BitsWithoutThisObj
-        if (parameters.size != parameterCount) {
-            throw InternalError("args count not match, declare count=$parameterCount, actual count=${parameters.size}")
+        val finalParameters = addSecondSlotPlaceHolders(parameters)
+        if (finalParameters.size != parameterCount) {
+            throw InternalError("args count not match, declare count=$parameterCount, actual count=${finalParameters.size}")
         }
         val registers = arrayOfNulls<Any>(impl.registerCount)
-        parameters.forEachIndexed { index, parameter ->
+        finalParameters.forEachIndexed { index, parameter ->
             registers[impl.registerCount - parameterCount + index] = parameter
         }
         val firstInstruction: DexBackedInstruction =
@@ -144,6 +147,17 @@ object KVMAndroid {
         } while (!state.returned)
         logV("returned")
         return state.returnValue
+    }
+
+    private fun addSecondSlotPlaceHolders(parameters: Array<Any?>): Array<Any?> {
+        val result = ArrayList<Any?>()
+        parameters.forEach {
+            result.add(it)
+            if (it is Long || it is Double) {
+                result.add(SecondSlotPlaceHolderOf64BitValue)
+            }
+        }
+        return result.toArray()
     }
 
     /**
@@ -220,10 +234,19 @@ object KVMAndroid {
                 interpreterState.returnValue = VoidReturnValue
                 logV("RETURN_VOID: null")
             }
+            // 0x0f
+            Opcode.RETURN -> {
+                val i = instruction as Instruction11x
+                val value = registers[i.registerA]
+                interpreterState.returned = true
+                interpreterState.returnValue = value
+                logV("RETURN: $value")
+            }
             // 0x10
             Opcode.RETURN_WIDE -> {
                 val i = instruction as Instruction11x
-                val value = registers[i.registerA] as Long
+                // TODO: double ?
+                val value = registers[i.registerA]
                 interpreterState.returned = true
                 interpreterState.returnValue = value
                 logV("RETURN_WIDE: $value")
@@ -403,7 +426,7 @@ object KVMAndroid {
             // 0x54
             Opcode.IGET_OBJECT -> {
                 val i = instruction as DexBackedInstruction22c
-                getInstanceFieldWithCheck(registers, i, Object::class.java)
+                getInstanceFieldWithCheck(registers, i, null)
             }
             // 0x5a
             Opcode.IPUT_WIDE -> {
@@ -413,22 +436,82 @@ object KVMAndroid {
             // 0x5b
             Opcode.IPUT_OBJECT -> {
                 val i = instruction as DexBackedInstruction22c
-                setInstanceFieldWithCheck(registers, i, Object::class.java)
+                setInstanceFieldWithCheck(registers, i, null)
             }
             // 0x5c
             Opcode.IPUT_BOOLEAN -> {
                 val i = instruction as DexBackedInstruction22c
-                setInstanceFieldWithCheck(registers, i, Boolean::class.java)
+                setInstanceFieldWithCheck(registers, i, null)
+            }
+            // 0x60
+            Opcode.SGET -> {
+                val i = instruction as DexBackedInstruction21c
+                accessStaticFieldWithCheck(AccessType.GET, registers, i, JavaTypes.INTEGER_OBJECT)
+            }
+            // 0x61
+            Opcode.SGET_WIDE -> {
+                val i = instruction as DexBackedInstruction21c
+                accessStaticFieldWithCheck(AccessType.GET, registers, i, null)
             }
             // 0x62
             Opcode.SGET_OBJECT -> {
                 val i = instruction as DexBackedInstruction21c
-                accessStaticFieldWithCheck(AccessType.GET, registers, i, Object::class.java)
+                accessStaticFieldWithCheck(AccessType.GET, registers, i, JavaTypes.OBJECT)
+            }
+            // 0x63
+            Opcode.SGET_BOOLEAN -> {
+                val i = instruction as DexBackedInstruction21c
+                accessStaticFieldWithCheck(AccessType.GET, registers, i, JavaTypes.BOOLEAN_OBJECT)
+            }
+            // 0x64
+            Opcode.SGET_BYTE -> {
+                val i = instruction as DexBackedInstruction21c
+                accessStaticFieldWithCheck(AccessType.GET, registers, i, JavaTypes.BYTE_OBJECT)
+            }
+            // 0x65
+            Opcode.SGET_CHAR -> {
+                val i = instruction as DexBackedInstruction21c
+                accessStaticFieldWithCheck(AccessType.GET, registers, i, JavaTypes.CHARACTER_OBJECT)
+            }
+            // 0x66
+            Opcode.SGET_SHORT -> {
+                val i = instruction as DexBackedInstruction21c
+                accessStaticFieldWithCheck(AccessType.GET, registers, i, JavaTypes.SHORT_OBJECT)
+            }
+            // 0x67
+            Opcode.SPUT -> {
+                val i = instruction as DexBackedInstruction21c
+                accessStaticFieldWithCheck(AccessType.SET, registers, i, JavaTypes.INTEGER_OBJECT)
+            }
+            // 0x68
+            Opcode.SPUT_WIDE -> {
+                val i = instruction as DexBackedInstruction21c
+                accessStaticFieldWithCheck(AccessType.SET, registers, i, null)
             }
             // 0x69
             Opcode.SPUT_OBJECT -> {
                 val i = instruction as DexBackedInstruction21c
-                accessStaticFieldWithCheck(AccessType.SET, registers, i, Object::class.java)
+                accessStaticFieldWithCheck(AccessType.SET, registers, i, JavaTypes.OBJECT)
+            }
+            // 0x6a
+            Opcode.SPUT_BOOLEAN -> {
+                val i = instruction as DexBackedInstruction21c
+                accessStaticFieldWithCheck(AccessType.SET, registers, i, JavaTypes.BOOLEAN_OBJECT)
+            }
+            // 0x6b
+            Opcode.SPUT_BYTE -> {
+                val i = instruction as DexBackedInstruction21c
+                accessStaticFieldWithCheck(AccessType.SET, registers, i, JavaTypes.BYTE_OBJECT)
+            }
+            // 0x6c
+            Opcode.SPUT_CHAR -> {
+                val i = instruction as DexBackedInstruction21c
+                accessStaticFieldWithCheck(AccessType.SET, registers, i, JavaTypes.CHARACTER_OBJECT)
+            }
+            // 0x6d
+            Opcode.SPUT_SHORT -> {
+                val i = instruction as DexBackedInstruction21c
+                accessStaticFieldWithCheck(AccessType.SET, registers, i, JavaTypes.SHORT_OBJECT)
             }
             // 0x6e
             Opcode.INVOKE_VIRTUAL -> {
@@ -565,8 +648,15 @@ object KVMAndroid {
         interpreterState: InterpreterState
     ) {
         val i = instruction as DexBackedInstruction21t
-        // regard null pointer as 0 in register
-        val value: Int = (registers[i.registerA] ?: 0) as Int
+
+        @Suppress("MoveVariableDeclarationIntoWhen")
+        val rawValue = registers[i.registerA]
+        // regard null pointer as 0 in register, int as int, non-null object as 1
+        val value: Int = when (rawValue) {
+            null -> 0
+            is Int -> rawValue
+            else -> 1 // trick?
+        }
         val condition = when (instruction.opcode) {
             Opcode.IF_EQZ -> value == 0
             Opcode.IF_NEZ -> value != 0
@@ -638,6 +728,7 @@ object KVMAndroid {
 
         val clazz = loadClassBySignatureUsingClassLoader(definingClass)
         val field = clazz.getDeclaredField(fieldRef.name)
+        field.isAccessible = true
         val fieldValue = field.get(targetObject)
         if (fieldValue != null && checkingType != null && !checkingType.isAssignableFrom(
                 fieldValue.javaClass
@@ -666,6 +757,7 @@ object KVMAndroid {
 
         val clazz = loadClassBySignatureUsingClassLoader(definingClass)
         val field = clazz.getDeclaredField(fieldRef.name)
+        field.isAccessible = true
         when (field.type) {
             Boolean::class.java -> field.setBoolean(targetObject, fieldValue as Boolean)
             Byte::class.java -> field.setByte(targetObject, fieldValue as Byte)
@@ -768,7 +860,7 @@ object KVMAndroid {
         normalizePrimitiveTypes(parameterTypes, params)
         return if ("<init>" == methodRef.name) {
             // must be invoke-direct here, and must after a new-instance?
-            val constructor = clazz.getConstructor(*parameterTypes)
+            val constructor = clazz.getDeclaredConstructor(*parameterTypes)
             constructor.isAccessible = true
             val newObj = constructor.newInstance(*params)
             // new java.lang.Object() maybe no use here
@@ -778,12 +870,6 @@ object KVMAndroid {
             }
             newObj
         } else {
-            // clazz.getDeclaredMethod()
-            val method = clazz.findMethod(methodRef.name, parameterTypes)
-            method.isAccessible = true
-            logV("" + method)
-            // static or virtual?
-            // start to invoke, 山口山~!
             if (needThisObj) {
                 if (instruction.opcode == Opcode.INVOKE_SUPER) {
                     ReflectionBridge.callSuperMethodNative(
@@ -793,9 +879,15 @@ object KVMAndroid {
                         params
                     )
                 } else {
+                    val method = clazz.findMethod(methodRef.name, parameterTypes)
+                    method.isAccessible = true
+                    // start to invoke, 山口山~!
                     method.invoke(thisObj, *params)
                 }
             } else {
+                val method = clazz.findMethod(methodRef.name, parameterTypes)
+                method.isAccessible = true
+                // start to invoke, 山口山~!
                 method.invoke(null, *params)
             }
         }
@@ -926,6 +1018,10 @@ private fun <T> Class<T>.findMethod(name: String, parameterTypes: Array<Class<*>
     return try {
         getDeclaredMethod(name, *parameterTypes)
     } catch (e: NoSuchMethodException) {
-        getMethod(name, *parameterTypes)
+        try {
+            getMethod(name, *parameterTypes)
+        } catch (e: NoSuchMethodException) {
+            throw e
+        }
     }
 }
