@@ -13,6 +13,7 @@ import org.jf.dexlib2.dexbacked.DexBackedMethod
 import org.jf.dexlib2.dexbacked.DexReader
 import org.jf.dexlib2.dexbacked.instruction.*
 import org.jf.dexlib2.iface.instruction.Instruction
+import org.jf.dexlib2.iface.instruction.ReferenceInstruction
 import org.jf.dexlib2.iface.instruction.formats.*
 import org.jf.dexlib2.iface.reference.FieldReference
 import org.jf.dexlib2.iface.reference.MethodReference
@@ -20,6 +21,7 @@ import org.jf.dexlib2.iface.reference.StringReference
 import org.jf.dexlib2.iface.reference.TypeReference
 import quickpatch.sdk.ReflectionBridge
 import java.io.File
+import java.lang.reflect.Method
 import java.util.*
 import kotlin.collections.LinkedHashSet
 
@@ -180,6 +182,24 @@ object KVMAndroid {
                 val srcValue = registers[i.registerB]
                 registers[i.registerA] = srcValue
             }
+            // 0x08
+            Opcode.MOVE_OBJECT_FROM16 -> {
+                val i = instruction as Instruction22x
+                val srcValue = registers[i.registerB]
+                registers[i.registerA] = srcValue
+            }
+            // 0x09
+            Opcode.MOVE_OBJECT_16 -> {
+                val i = instruction as Instruction32x
+                val srcValue = registers[i.registerB]
+                registers[i.registerA] = srcValue
+            }
+            // 0x0a
+            Opcode.MOVE_RESULT -> {
+                val i = instruction as Instruction11x
+                registers[i.registerA] = interpreterState.tempResultObject
+                logV("MOVE_RESULT:${interpreterState.tempResultObject}")
+            }
             // 0x0b
             Opcode.MOVE_RESULT_WIDE -> {
                 val i = instruction as Instruction11x
@@ -289,6 +309,13 @@ object KVMAndroid {
                     throw IllegalArgumentException("referenceType is not TYPE")
                 }
             }
+            // 0x21
+            Opcode.ARRAY_LENGTH -> {
+                val i = instruction as Instruction12x
+                // val arr = registers[i.registerB] as Array<*> // don't use this
+                val arr = registers[i.registerB]
+                registers[i.registerA] = java.lang.reflect.Array.getLength(arr!!)
+            }
             // 0x22
             Opcode.NEW_INSTANCE -> {
                 val i = instruction as Instruction21c
@@ -299,13 +326,15 @@ object KVMAndroid {
             // 0x23
             Opcode.NEW_ARRAY -> {
                 val i = instruction as Instruction22c
-                val newArrayObj = handleNewArray(i, registers)
+                val arrayLength = registers[i.registerB] as Int
+                val newArrayObj = handleNewArray(i, arrayLength)
                 registers[i.registerA] = newArrayObj
             }
             // 0x24
             Opcode.FILLED_NEW_ARRAY -> {
                 val i = instruction as Instruction35c
-                val newArrayObj = handleFilledNewArray(i, registers)
+                val newArrayObj = handleNewArray(i, i.registerCount)
+                fillNewArray(i, newArrayObj, registers)
                 interpreterState.tempResultObject = newArrayObj
             }
             // 0x28
@@ -323,36 +352,41 @@ object KVMAndroid {
                 registers[i.registerA] = value1.compareTo(value2)
                 logV("" + i)
             }
-            // 0x35
-            Opcode.IF_GE -> {
-                val i = instruction as DexBackedInstruction22t
-                val value1 = registers[i.registerA] as Int
-                val value2 = registers[i.registerB] as Int
-                if (value1 >= value2) {
-                    reader.offset = i.instructionStart + i.codeOffset * 2
-                    interpreterState.jumpInstruction =
-                        DexBackedInstruction.readFrom(reader) as DexBackedInstruction
-                    logV("IF_GE: " + interpreterState.jumpInstruction)
+            // 0x32 - 0x37
+            Opcode.IF_EQ,
+            Opcode.IF_NE,
+            Opcode.IF_LT,
+            Opcode.IF_GE,
+            Opcode.IF_GT,
+            Opcode.IF_LE -> {
+                handleCompare(instruction, registers, reader, interpreterState)
+            }
+            // 0x38 - 0x3d
+            Opcode.IF_EQZ,
+            Opcode.IF_NEZ,
+            Opcode.IF_LTZ,
+            Opcode.IF_GEZ,
+            Opcode.IF_GTZ,
+            Opcode.IF_LEZ -> {
+                handleZeroCompare(instruction, registers, reader, interpreterState)
+            }
+            // 0x44 - 0x4a
+            Opcode.AGET,
+            Opcode.AGET_WIDE,
+            Opcode.AGET_OBJECT,
+            Opcode.AGET_BOOLEAN,
+            Opcode.AGET_BYTE,
+            Opcode.AGET_CHAR,
+            Opcode.AGET_SHORT -> {
+                val i = instruction as DexBackedInstruction23x
+                val array = registers[i.registerB]
+                val index = registers[i.registerC] as Int
+                registers[i.registerA] = JavaUtils.arrayGet(array, index)
+                if (i.opcode == Opcode.AGET_WIDE) {
+                    registers[i.registerA + 1] = SecondSlotPlaceHolderOf64BitValue
                 }
             }
-            // 0x39
-            Opcode.IF_NEZ -> {
-                val i = instruction as DexBackedInstruction21t
-                val rawValue = registers[i.registerA]
-                val isZero = if (rawValue == null) {
-                    true
-                } else {
-                    rawValue == 0
-                }
-                if (!isZero) {
-                    logV("" + i.codeOffset)
-                    reader.offset = i.instructionStart + i.codeOffset * 2
-                    interpreterState.jumpInstruction =
-                        DexBackedInstruction.readFrom(reader) as DexBackedInstruction
-                    logV("IF_NEZ: " + interpreterState.jumpInstruction)
-                }
-            }
-            // 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 0x50, 0x51,
+            // 0x4b - 0x51
             Opcode.APUT,
             Opcode.APUT_WIDE,
             Opcode.APUT_OBJECT,
@@ -427,6 +461,42 @@ object KVMAndroid {
                 registers[i.registerA] = value.toLong()
                 registers[i.registerA + 1] = SecondSlotPlaceHolderOf64BitValue
             }
+            // 0x95
+            Opcode.AND_INT -> {
+                val i = instruction as Instruction23x
+                registers[i.registerA] =
+                    (registers[i.registerB] as Int) and (registers[i.registerC] as Int)
+            }
+            // 0x96
+            Opcode.OR_INT -> {
+                val i = instruction as Instruction23x
+                registers[i.registerA] =
+                    (registers[i.registerB] as Int) or (registers[i.registerC] as Int)
+            }
+            // 0x97
+            Opcode.XOR_INT -> {
+                val i = instruction as Instruction23x
+                registers[i.registerA] =
+                    (registers[i.registerB] as Int) xor (registers[i.registerC] as Int)
+            }
+            // 0x98
+            Opcode.SHL_INT -> {
+                val i = instruction as Instruction23x
+                registers[i.registerA] =
+                    (registers[i.registerB] as Int) shl (registers[i.registerC] as Int)
+            }
+            // 0x99
+            Opcode.SHR_INT -> {
+                val i = instruction as Instruction23x
+                registers[i.registerA] =
+                    (registers[i.registerB] as Int) shr (registers[i.registerC] as Int)
+            }
+            // 0x9a
+            Opcode.USHR_INT -> {
+                val i = instruction as Instruction23x
+                registers[i.registerA] =
+                    (registers[i.registerB] as Int) ushr (registers[i.registerC] as Int)
+            }
             // 0xbb
             Opcode.ADD_LONG_2ADDR -> {
                 val i = instruction as Instruction12x
@@ -461,6 +531,56 @@ object KVMAndroid {
             }
         }
         usedOpCodes.add(instruction.opcode)
+    }
+
+    private fun handleCompare(
+        instruction: DexBackedInstruction,
+        registers: Array<Any?>,
+        reader: DexReader,
+        interpreterState: InterpreterState
+    ) {
+        val i = instruction as DexBackedInstruction22t
+        val value1 = registers[i.registerA] as Int
+        val value2 = registers[i.registerB] as Int
+        val condition = when (instruction.opcode) {
+            Opcode.IF_EQ -> value1 == value2
+            Opcode.IF_NE -> value1 != value2
+            Opcode.IF_LT -> value1 < value2
+            Opcode.IF_GE -> value1 >= value2
+            Opcode.IF_GT -> value1 > value2
+            Opcode.IF_LE -> value1 <= value2
+            else -> throw IllegalArgumentException("?")
+        }
+        if (condition) {
+            reader.offset = i.instructionStart + i.codeOffset * 2
+            interpreterState.jumpInstruction =
+                DexBackedInstruction.readFrom(reader) as DexBackedInstruction
+        }
+    }
+
+    private fun handleZeroCompare(
+        instruction: DexBackedInstruction,
+        registers: Array<Any?>,
+        reader: DexReader,
+        interpreterState: InterpreterState
+    ) {
+        val i = instruction as DexBackedInstruction21t
+        // regard null pointer as 0 in register
+        val value: Int = (registers[i.registerA] ?: 0) as Int
+        val condition = when (instruction.opcode) {
+            Opcode.IF_EQZ -> value == 0
+            Opcode.IF_NEZ -> value != 0
+            Opcode.IF_LTZ -> value < 0
+            Opcode.IF_GEZ -> value >= 0
+            Opcode.IF_GTZ -> value > 0
+            Opcode.IF_LEZ -> value <= 0
+            else -> throw IllegalArgumentException("?")
+        }
+        if (condition) {
+            reader.offset = i.instructionStart + i.codeOffset * 2
+            interpreterState.jumpInstruction =
+                DexBackedInstruction.readFrom(reader) as DexBackedInstruction
+        }
     }
 
     enum class AccessType { GET, SET }
@@ -583,47 +703,43 @@ object KVMAndroid {
         }
     }
 
-    private fun handleNewArray(
-        instruction: Instruction22c,
-        registers: Array<Any?>
-    ): Any {
+    private fun handleNewArray(instruction: ReferenceInstruction, arrayLength: Int): Any {
         if (instruction.referenceType != ReferenceType.TYPE) {
             throw IllegalArgumentException("referenceType is not TYPE")
         }
         val type = (instruction.reference as TypeReference).type
-        logV("NEW_ARRAY: $type")
+        logV("create array: $type")
         val dimensionCount = type.lastIndexOf('[') + 1
         if (dimensionCount <= 0) {
             throw IllegalArgumentException("$type is not an array?")
         }
         val innerType = type.substring(dimensionCount)
         val clazz = loadClassBySignatureUsingClassLoader(innerType)
-        val arrayOuterLength = registers[instruction.registerB] as Int
         val dimensions = IntArray(dimensionCount)
-        dimensions[0] = arrayOuterLength
+        dimensions[0] = arrayLength
         return java.lang.reflect.Array.newInstance(clazz, *dimensions)
     }
 
-    private fun handleFilledNewArray(
-        instruction: Instruction35c,
-        registers: Array<Any?>
-    ): Any {
-        if (instruction.referenceType != ReferenceType.TYPE) {
-            throw IllegalArgumentException("referenceType is not TYPE")
+    private fun fillNewArray(i: Instruction35c, newArrayObj: Any, registers: Array<Any?>) {
+        val initValues = arrayOfNulls<Any?>(i.registerCount)
+        if (i.registerCount > 0) {
+            initValues[0] = registers[i.registerC]
         }
-        val type = (instruction.reference as TypeReference).type
-        logV("FILLED_NEW_ARRAY: $type")
-        val dimensionCount = type.lastIndexOf('[') + 1
-        if (dimensionCount <= 0) {
-            throw IllegalArgumentException("$type is not an array?")
+        if (i.registerCount > 1) {
+            initValues[1] = registers[i.registerD]
         }
-        val innerType = type.substring(dimensionCount)
-        val clazz = loadClassBySignatureUsingClassLoader(innerType)
-//        val arrayOuterLength = registers[instruction.registerB] as Int
-//        val dimensions = IntArray(dimensionCount)
-//        dimensions[0] = arrayOuterLength
-//        return java.lang.reflect.Array.newInstance(clazz, *dimensions)
-        return Any()
+        if (i.registerCount > 2) {
+            initValues[2] = registers[i.registerE]
+        }
+        if (i.registerCount > 3) {
+            initValues[3] = registers[i.registerF]
+        }
+        if (i.registerCount > 4) {
+            initValues[4] = registers[i.registerG]
+        }
+        initValues.forEachIndexed { index, value ->
+            JavaUtils.arraySet(newArrayObj, index, value)
+        }
     }
 
     private fun logE(msg: String) {
@@ -645,12 +761,16 @@ object KVMAndroid {
         val parameterTypes = convertToTypes(methodRef.parameterTypes)
         val invokeParams = parametersFromRegister(i, registers)
         val realParams = remove64BitPlaceHolders(invokeParams)
+        val thisObj = if (needThisObj) realParams[0] else null
+        val params =
+            if (needThisObj) realParams.sliceArray(1 until realParams.size)
+            else realParams
+        normalizePrimitiveTypes(parameterTypes, params)
         return if ("<init>" == methodRef.name) {
             // must be invoke-direct here, and must after a new-instance?
             val constructor = clazz.getConstructor(*parameterTypes)
             constructor.isAccessible = true
-            val realParamsWithoutFirst = realParams.sliceArray(1 until realParams.size)
-            val newObj = constructor.newInstance(*realParamsWithoutFirst)
+            val newObj = constructor.newInstance(*params)
             // new java.lang.Object() maybe no use here
             if (registers[i.registerC] is LazyInitializeSystemClassInstance) {
                 // replace LazyInitializeSystemClassInstance to the real system class object
@@ -658,26 +778,52 @@ object KVMAndroid {
             }
             newObj
         } else {
-            val method = clazz.getDeclaredMethod(methodRef.name, *parameterTypes)
+            // clazz.getDeclaredMethod()
+            val method = clazz.findMethod(methodRef.name, parameterTypes)
             method.isAccessible = true
             logV("" + method)
             // static or virtual?
             // start to invoke, 山口山~!
             if (needThisObj) {
-                val thisObj = realParams[0]
-                val realParamsWithoutFirst = realParams.sliceArray(1 until realParams.size)
                 if (instruction.opcode == Opcode.INVOKE_SUPER) {
                     ReflectionBridge.callSuperMethodNative(
                         thisObj,
                         methodRef.name,
                         getMethodSignature(methodRef),
-                        realParamsWithoutFirst
+                        params
                     )
                 } else {
-                    method.invoke(thisObj, *realParamsWithoutFirst)
+                    method.invoke(thisObj, *params)
                 }
             } else {
-                method.invoke(null, *realParams)
+                method.invoke(null, *params)
+            }
+        }
+    }
+
+    private fun normalizePrimitiveTypes(
+        parameterTypes: Array<Class<*>?>,
+        params: Array<Any?>
+    ) {
+        parameterTypes.forEachIndexed { index, type ->
+            val param = params[index]
+            if (param != null && type != null) {
+                when (param) {
+                    is Int -> {
+                        when (type) {
+                            Boolean::class.java -> params[index] = param != 0
+                            Byte::class.java -> params[index] = param.toByte()
+                            Char::class.java -> params[index] = param.toChar()
+                            Short::class.java -> params[index] = param.toShort()
+                        }
+                    }
+                    is Long -> {
+                        logV("LONG")
+                    }
+                    is Double -> {
+                        logV("DOUBLE")
+                    }
+                }
             }
         }
     }
@@ -743,18 +889,6 @@ object KVMAndroid {
         }
     }
 
-    fun invokeByReflection(
-        clazz: Class<*>,
-        methodName: String,
-        parameterTypes: Array<Class<*>>,
-        thisObj: Any?,
-        args: Array<Any?>
-    ): Any? {
-        val method = clazz.getDeclaredMethod(methodName, *parameterTypes)
-        method.isAccessible = true
-        return method.invoke(thisObj, *args)
-    }
-
     fun invoke(
         className: String,
         methodName: String,
@@ -767,8 +901,9 @@ object KVMAndroid {
         val method = dexClass.methods.firstOrNull {
             it.name == methodName && it.parameterTypes == parameterTypes
         }
+        @Suppress("FoldInitializerAndIfToElvis")
         if (method == null) {
-            throw NoSuchMethodError("found class but cannot find method: $method")
+            throw NoSuchMethodError("found class but cannot find method: $methodName")
         }
         return invokeMethod(method, needThisObj, invokeParams)
     }
@@ -785,4 +920,12 @@ object KVMAndroid {
 //    private fun dumpInstruction(instruction: Instruction?): String {
 //        instruction.runCatching { }
 //    }
+}
+
+private fun <T> Class<T>.findMethod(name: String, parameterTypes: Array<Class<*>?>): Method {
+    return try {
+        getDeclaredMethod(name, *parameterTypes)
+    } catch (e: NoSuchMethodException) {
+        getMethod(name, *parameterTypes)
+    }
 }

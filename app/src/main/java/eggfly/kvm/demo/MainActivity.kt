@@ -18,6 +18,7 @@ import eggfly.kvm.core.classToSignature
 import kotlinx.android.synthetic.main.activity_main.*
 import quickpatch.sdk.ReflectionBridge
 import java.io.File
+import java.lang.StringBuilder
 
 const val TAG = "MainActivity"
 
@@ -104,7 +105,14 @@ class MainActivity : AppCompatActivity() {
         Array(5) { Array(2) { IntArray(4) } }
         arrayOfNulls<Activity>(9)
         arrayOfNulls<Array<Int>>(9)
+
+        val floatValue = 100000000.123456F
+        val doubleValue = 11111111.3456789
+        val builder = StringBuilder()
+        builder.appendln(floatValue)
+        builder.appendln(doubleValue)
         Toast.makeText(this, "directly: $t1 ms\nmy interpreter: $t2 ms", Toast.LENGTH_LONG).show()
+        Log.d(TAG, builder.toString())
     }
 
     override fun onResume() {

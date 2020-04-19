@@ -19,6 +19,8 @@ fun leet117() {
  * 这个思路很土，而且依赖这道题的按层的输入数据
  */
 fun fillNextPointerAndPrint(input: Array<Int?>) {
+    val floatValue = 100000000.123456F
+    val doubleValue = 11111111.3456789
     var level = 1 // 第几层
     val builder = StringBuilder()
     input.forEachIndexed { index, value ->
@@ -30,5 +32,7 @@ fun fillNextPointerAndPrint(input: Array<Int?>) {
             level++
         }
     }
+    builder.appendln(floatValue)
+    builder.appendln(doubleValue)
     System.err.println(builder.toString())
 }

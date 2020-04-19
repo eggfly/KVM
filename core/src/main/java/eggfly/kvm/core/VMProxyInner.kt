@@ -3,7 +3,7 @@ package eggfly.kvm.core
 import eggfly.kvm.core.KVMAndroid.invoke
 
 object VMProxyInner {
-    inline fun invoke(
+    fun invoke(
         classOfMethod: String,
         methodName: String,
         argTypes: Array<Class<*>>?,
@@ -19,7 +19,31 @@ object VMProxyInner {
             System.arraycopy(args, 0, myArgs, 1, args.size)
             myArgs[0] = thisObject
         }
-        val parameterTypes = argTypes?.map { it.name }
+        // TODO check performance here
+        val parameterTypes = argTypes?.map {
+            convertToSignature(it)
+        }
         return invoke(classOfMethod, methodName, parameterTypes, !isStatic, myArgs)
+    }
+
+    private fun convertToSignature(it: Class<*>): String {
+        return when (it) {
+            Boolean::class.java -> "Z"
+            Byte::class.java -> "B"
+            Char::class.java -> "C"
+            Short::class.java -> "S"
+            Int::class.java -> "I"
+            Long::class.java -> "J"
+            Float::class.java -> "F"
+            Double::class.java -> "D"
+            Void::class.java -> "V" // ?
+            else -> {
+                if (it.name[0] == '[') {
+                    it.name.replace('.', '/')
+                } else {
+                    'L' + it.name.replace('.', '/') + ';'
+                }
+            }
+        }
     }
 }
