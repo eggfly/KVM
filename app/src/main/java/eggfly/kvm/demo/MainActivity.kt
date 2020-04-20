@@ -115,6 +115,7 @@ class MainActivity : AppCompatActivity() {
         Log.d(TAG, builder.toString())
         // println(Int::javaClass) // this cause kotlin compiler error  
         println(Int::class.java)
+        KotlinTest.testInvokeVirtualRange("0", 1, 2L, 3.3, arrayOf(4), arrayListOf(5))
     }
 
     override fun onResume() {

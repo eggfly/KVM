@@ -1,6 +1,7 @@
 package eggfly.kvm.demo
 
 import android.util.Log
+import java.util.ArrayList
 import kotlin.RuntimeException
 
 object KotlinTest {
@@ -83,5 +84,16 @@ object KotlinTest {
         } finally {
             Throwable().printStackTrace()
         }
+    }
+
+    fun testInvokeVirtualRange(
+        s: String,
+        i: Int,
+        l: Long,
+        d: Double,
+        arrayOf: Array<Int>,
+        arrayListOf: ArrayList<Int>
+    ) {
+        Log.d(TAG, "$s, $i, $l, $d, $arrayOf, $arrayListOf")
     }
 }

@@ -14,6 +14,8 @@ import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
 public class DecryptFile {
+    private static final String TAG = "DecryptFile";
+
     public static File main(File encFile, Context context) {
         String name = "decrypted.dex";
         try {
@@ -58,7 +60,7 @@ public class DecryptFile {
                     i = cis.read(mByte);
                 }
             } catch (IOException e) {
-                e.printStackTrace();
+                Log.w(TAG, e);
             }
             fos.flush();
             fos.close();
@@ -66,7 +68,7 @@ public class DecryptFile {
             fis.close();
             return aesFileBis;
         } catch (Exception e) {
-            e.printStackTrace();
+            Log.w(TAG, e);
         }
         return null;
     }

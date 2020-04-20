@@ -516,26 +516,53 @@ object KVMAndroid {
             // 0x6e
             Opcode.INVOKE_VIRTUAL -> {
                 interpreterState.tempResultObject =
-                    handleInstruction35c(instruction, registers, true)
+                    handleInstruction35cOrInstruction3rc(instruction, registers, true)
                 logV("INVOKE_VIRTUAL")
             }
             // 0x6f
             Opcode.INVOKE_SUPER -> {
                 interpreterState.tempResultObject =
-                    handleInstruction35c(instruction, registers, true)
+                    handleInstruction35cOrInstruction3rc(instruction, registers, true)
                 logV("INVOKE_SUPER")
             }
             // 0x70
             Opcode.INVOKE_DIRECT -> {
                 interpreterState.tempResultObject =
-                    handleInstruction35c(instruction, registers, true)
+                    handleInstruction35cOrInstruction3rc(instruction, registers, true)
                 logV("INVOKE_DIRECT")
             }
             // 0x71
             Opcode.INVOKE_STATIC -> {
                 interpreterState.tempResultObject =
-                    handleInstruction35c(instruction, registers, false)
+                    handleInstruction35cOrInstruction3rc(instruction, registers, false)
                 logV("INVOKE_STATIC")
+            }
+            // 0x74
+            Opcode.INVOKE_VIRTUAL_RANGE -> {
+                interpreterState.tempResultObject =
+                    handleInstruction35cOrInstruction3rc(instruction, registers, true)
+                logV("INVOKE_VIRTUAL_RANGE")
+            }
+            // 0x75
+            Opcode.INVOKE_SUPER_RANGE -> {
+                // TODO: check valid
+                interpreterState.tempResultObject =
+                    handleInstruction35cOrInstruction3rc(instruction, registers, true)
+                logV("INVOKE_SUPER_RANGE")
+            }
+            // 0x76
+            Opcode.INVOKE_DIRECT_RANGE -> {
+                // TODO: check valid
+                interpreterState.tempResultObject =
+                    handleInstruction35cOrInstruction3rc(instruction, registers, false)
+                logV("INVOKE_DIRECT_RANGE")
+            }
+            // 0x77
+            Opcode.INVOKE_STATIC_RANGE -> {
+                // TODO: check valid
+                interpreterState.tempResultObject =
+                    handleInstruction35cOrInstruction3rc(instruction, registers, false)
+                logV("INVOKE_STATIC_RANGE")
             }
             // 0x81
             Opcode.INT_TO_LONG -> {
@@ -838,12 +865,12 @@ object KVMAndroid {
         Log.e(TAG, msg)
     }
 
-    private fun handleInstruction35c(
+    private fun handleInstruction35cOrInstruction3rc(
         instruction: Instruction,
         registers: Array<Any?>,
         needThisObj: Boolean
     ): Any? {
-        val i = instruction as Instruction35c
+        val i = instruction as ReferenceInstruction
         if (i.referenceType != ReferenceType.METHOD) {
             throw IllegalArgumentException("referenceType is not METHOD")
         }
@@ -851,7 +878,12 @@ object KVMAndroid {
         val definingClass = methodRef.definingClass
         val clazz = loadClassBySignatureUsingClassLoader(definingClass)
         val parameterTypes = convertToTypes(methodRef.parameterTypes)
-        val invokeParams = parametersFromRegister(i, registers)
+
+        val invokeParams = when (instruction) {
+            is Instruction3rc -> parametersFromRegisterRange(instruction, registers)
+            is Instruction35c -> parametersFromFiveRegister(instruction, registers)
+            else -> throw IllegalArgumentException("?")
+        }
         val realParams = remove64BitPlaceHolders(invokeParams)
         val thisObj = if (needThisObj) realParams[0] else null
         val params =
@@ -864,10 +896,8 @@ object KVMAndroid {
             constructor.isAccessible = true
             val newObj = constructor.newInstance(*params)
             // new java.lang.Object() maybe no use here
-            if (registers[i.registerC] is LazyInitializeSystemClassInstance) {
-                // replace LazyInitializeSystemClassInstance to the real system class object
-                registers[i.registerC] = newObj
-            }
+            // here is a trick
+            replaceLazyInitializeObjectInRegister(registers, i, newObj)
             newObj
         } else {
             if (needThisObj) {
@@ -890,6 +920,20 @@ object KVMAndroid {
                 // start to invoke, 山口山~!
                 method.invoke(null, *params)
             }
+        }
+    }
+
+    private fun replaceLazyInitializeObjectInRegister(
+        registers: Array<Any?>, i: Instruction, newObj: Any?
+    ) {
+        val firstIndex = when (i) {
+            is Instruction35c -> i.registerC
+            is Instruction3rc -> i.startRegister
+            else -> throw IllegalArgumentException("?")
+        }
+        if (registers[firstIndex] is LazyInitializeSystemClassInstance) {
+            // replace LazyInitializeSystemClassInstance to the real object
+            registers[firstIndex] = newObj
         }
     }
 
@@ -926,7 +970,7 @@ object KVMAndroid {
     private fun remove64BitPlaceHolders(invokeParams: Array<Any?>) =
         invokeParams.filter { it != SecondSlotPlaceHolderOf64BitValue }.toTypedArray()
 
-    private fun parametersFromRegister(
+    private fun parametersFromFiveRegister(
         i: Instruction35c,
         registers: Array<Any?>
     ): Array<Any?> {
@@ -948,6 +992,11 @@ object KVMAndroid {
         }
         return invokeParams
     }
+
+
+    private fun parametersFromRegisterRange(i: Instruction3rc, registers: Array<Any?>) =
+        registers.sliceArray(i.startRegister until i.startRegister + i.registerCount)
+
 
     private fun convertToTypes(parameterTypes: List<CharSequence>): Array<Class<*>?> {
         return parameterTypes.map { type ->
