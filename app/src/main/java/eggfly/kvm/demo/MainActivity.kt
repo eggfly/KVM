@@ -24,6 +24,8 @@ const val TAG = "MainActivity"
 
 class MainActivity : AppCompatActivity() {
 
+    private fun aaa(s: String) {}
+
     companion object {
         private const val TAG2 = "MainActivity"
 

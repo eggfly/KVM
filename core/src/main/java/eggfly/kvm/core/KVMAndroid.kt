@@ -650,8 +650,11 @@ object KVMAndroid {
         interpreterState: InterpreterState
     ) {
         val i = instruction as DexBackedInstruction22t
-        val value1 = registers[i.registerA] as Int
-        val value2 = registers[i.registerB] as Int
+        val rawValue1 = registers[i.registerA]
+        val rawValue2 = registers[i.registerB]
+        // TODO: different types
+        val value1 = if (rawValue1 is Enum<*>) rawValue1.ordinal else rawValue1 as Int
+        val value2 = if (rawValue2 is Enum<*>) rawValue2.ordinal else rawValue2 as Int
         val condition = when (instruction.opcode) {
             Opcode.IF_EQ -> value1 == value2
             Opcode.IF_NE -> value1 != value2
@@ -909,10 +912,16 @@ object KVMAndroid {
                         params
                     )
                 } else {
-                    val method = clazz.findMethod(methodRef.name, parameterTypes)
-                    method.isAccessible = true
-                    // start to invoke, 山口山~!
-                    method.invoke(thisObj, *params)
+                    ReflectionBridge.callThisMethodNative(
+                        thisObj,
+                        methodRef.name,
+                        getMethodSignature(methodRef),
+                        params
+                    )
+//                    val method = clazz.findMethod(methodRef.name, parameterTypes)
+//                    method.isAccessible = true
+//                    // start to invoke, 山口山~!
+//                    method.invoke(thisObj, *params)
                 }
             } else {
                 val method = clazz.findMethod(methodRef.name, parameterTypes)
@@ -968,7 +977,10 @@ object KVMAndroid {
         "(" + methodRef.parameterTypes.joinToString("") + ")" + methodRef.returnType
 
     private fun remove64BitPlaceHolders(invokeParams: Array<Any?>) =
-        invokeParams.filter { it != SecondSlotPlaceHolderOf64BitValue }.toTypedArray()
+        invokeParams.filter {
+            // need reference equals
+            it !== SecondSlotPlaceHolderOf64BitValue
+        }.toTypedArray()
 
     private fun parametersFromFiveRegister(
         i: Instruction35c,

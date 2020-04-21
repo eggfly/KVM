@@ -3,7 +3,6 @@ package eggfly.kvm.demo
 import android.app.Application
 import android.content.Context
 import android.util.Log
-import eggfly.kvm.core.KVMAndroid
 
 @Suppress("unused")
 class MyApp : Application() {

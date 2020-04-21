@@ -24,10 +24,10 @@ object KotlinTest {
 
     private fun testMultiThread() {
         val t1 = Thread {
-            foo(-1, 10)
+            foo(-1, 7)
         }
         val t2 = Thread {
-            foo(-1, 15)
+            foo(-1, 2)
         }
         t1.start()
         t2.start()
