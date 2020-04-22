@@ -15,5 +15,10 @@ public class VMProxy {
         return VMProxyInner.INSTANCE.invoke(classOfMethod, methodName, argTypes, isStatic, thisObject, args);
     }
 
+    /**
+     * TODO: not implemented yet
+     *
+     * @return
+     */
     public static native Object nativeInvoke();
 }

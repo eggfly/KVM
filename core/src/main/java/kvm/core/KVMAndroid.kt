@@ -1,6 +1,7 @@
 package kvm.core
 
 import android.util.Log
+import com.google.common.primitives.Primitives
 import kvm.core.util.AppContext
 import kvm.core.util.AssetsUtils
 import kvm.core.util.JavaTypes
@@ -27,39 +28,22 @@ import java.util.*
 import kotlin.collections.ArrayList
 import kotlin.collections.LinkedHashSet
 
-private val Instruction.detail: String
+private val Any?.representation: String
     get() {
-        val builder = StringBuilder()
-        if (this is OneRegisterInstruction) {
-            builder.append("A=$registerA ")
+        val it = this
+        return when {
+            it == null -> "null"
+            it::class.java.isPrimitive ->
+                it.toString()
+            Primitives.isWrapperType(it::class.java) ->
+                it.toString()
+            it::class.java.declaringClass === KVMAndroid::class.java ->
+                it.toString()
+            it is String ->
+                "\"$it\""
+            else -> "${it::class.java.name}@${System.identityHashCode(it)}"
         }
-        if (this is TwoRegisterInstruction) {
-            builder.append("B=registerB ")
-        }
-        if (this is ThreeRegisterInstruction) {
-            builder.append("C=registerC ")
-        }
-        // no 4 register
-        if (this is FiveRegisterInstruction) {
-            builder.append("C=$registerC ")
-            builder.append("D=$registerD ")
-            builder.append("E=$registerE ")
-            builder.append("F=$registerF ")
-            builder.append("G=$registerG ")
-            builder.append("count=$registerCount ")
-        }
-        if (this is ReferenceInstruction) {
-            builder.append("${ReferenceType.toString(referenceType)}=$reference ")
-        }
-        if (this is WideLiteralInstruction) {
-            builder.append("wideLiteral: $wideLiteral ")
-        }
-        if (this is NarrowLiteralInstruction) {
-            builder.append("narrowLiteral: $narrowLiteral ")
-        }
-        return builder.toString()
     }
-
 
 object KVMAndroid {
     class Frame
@@ -148,7 +132,11 @@ object KVMAndroid {
     /**
      * 一个取巧的方法，当遇到64位值的时候，用来给第二个寄存器槽做占位，是个单例
      */
-    object SecondSlotPlaceHolderOf64BitValue
+    object WideValuePlaceHolder {
+        override fun toString(): String {
+            return "Wide2ndSlot"
+        }
+    }
 
     private fun invokeMethod(
         method: DexBackedMethod,
@@ -181,7 +169,7 @@ object KVMAndroid {
             state.jumpInstruction = null
             interpretInstruction(reader, instruction, registers, state)
         } while (!state.returned)
-        logV("returned")
+        logV("returned with value: ${state.returnValue}")
         return state.returnValue
     }
 
@@ -190,7 +178,7 @@ object KVMAndroid {
         parameters.forEach {
             result.add(it)
             if (it is Long || it is Double) {
-                result.add(SecondSlotPlaceHolderOf64BitValue)
+                result.add(WideValuePlaceHolder)
             }
         }
         return result.toArray()
@@ -208,7 +196,11 @@ object KVMAndroid {
         var firstInstruction: DexBackedInstruction
     )
 
-    object VoidReturnValue
+    object VoidReturnValue {
+        override fun toString(): String {
+            return "VoidReturnValue"
+        }
+    }
 
     @Suppress("SpellCheckingInspection")
     private fun interpretInstruction(
@@ -218,7 +210,8 @@ object KVMAndroid {
         interpreterState: InterpreterState
     ) {
         if (DEBUG) {
-            logInstruction(instruction, interpreterState)
+            logRegisters(registers)
+            logInstruction(registers, instruction, interpreterState)
         }
         when (instruction.opcode) {
             // 0x00
@@ -252,20 +245,20 @@ object KVMAndroid {
             Opcode.MOVE_RESULT -> {
                 val i = instruction as Instruction11x
                 registers[i.registerA] = interpreterState.tempResultObject
-                logV("MOVE_RESULT:${interpreterState.tempResultObject}")
+                logV("MOVE_RESULT: ${interpreterState.tempResultObject}")
             }
             // 0x0b
             Opcode.MOVE_RESULT_WIDE -> {
                 val i = instruction as Instruction11x
                 registers[i.registerA] = interpreterState.tempResultObject
-                registers[i.registerA + 1] = SecondSlotPlaceHolderOf64BitValue
-                logV("MOVE_RESULT_WIDE:${interpreterState.tempResultObject}")
+                registers[i.registerA + 1] = WideValuePlaceHolder
+                logV("MOVE_RESULT_WIDE: ${interpreterState.tempResultObject}")
             }
             // 0x0c
             Opcode.MOVE_RESULT_OBJECT -> {
                 val i = instruction as Instruction11x
                 registers[i.registerA] = interpreterState.tempResultObject
-                logV("MOVE_RESULT_OBJECT:${interpreterState.tempResultObject}")
+                logV("MOVE_RESULT_OBJECT: ${interpreterState.tempResultObject}")
             }
             // 0x0e
             Opcode.RETURN_VOID -> {
@@ -325,19 +318,19 @@ object KVMAndroid {
                 val i = instruction as Instruction21s
                 // wide need long
                 registers[i.registerA] = i.wideLiteral
-                registers[i.registerA + 1] = SecondSlotPlaceHolderOf64BitValue
+                registers[i.registerA + 1] = WideValuePlaceHolder
             }
             // 0x17
             Opcode.CONST_WIDE_32 -> {
                 val i = instruction as Instruction31i
                 registers[i.registerA] = i.wideLiteral
-                registers[i.registerA + 1] = SecondSlotPlaceHolderOf64BitValue
+                registers[i.registerA + 1] = WideValuePlaceHolder
             }
             // 0x18
             Opcode.CONST_WIDE -> {
                 val i = instruction as Instruction51l
                 registers[i.registerA] = i.wideLiteral
-                registers[i.registerA + 1] = SecondSlotPlaceHolderOf64BitValue
+                registers[i.registerA + 1] = WideValuePlaceHolder
             }
             // 0x1a
             Opcode.CONST_STRING -> {
@@ -450,7 +443,7 @@ object KVMAndroid {
                 val index = registers[i.registerC] as Int
                 registers[i.registerA] = JavaUtils.arrayGet(array, index)
                 if (i.opcode == Opcode.AGET_WIDE) {
-                    registers[i.registerA + 1] = SecondSlotPlaceHolderOf64BitValue
+                    registers[i.registerA + 1] = WideValuePlaceHolder
                 }
             }
             // 0x4b - 0x51
@@ -587,59 +580,51 @@ object KVMAndroid {
             Opcode.INVOKE_VIRTUAL -> {
                 interpreterState.tempResultObject =
                     handleInstruction35cOrInstruction3rc(instruction, registers, true)
-                logV("INVOKE_VIRTUAL")
             }
             // 0x6f
             Opcode.INVOKE_SUPER -> {
                 interpreterState.tempResultObject =
                     handleInstruction35cOrInstruction3rc(instruction, registers, true)
-                logV("INVOKE_SUPER")
             }
             // 0x70
             Opcode.INVOKE_DIRECT -> {
                 interpreterState.tempResultObject =
                     handleInstruction35cOrInstruction3rc(instruction, registers, true)
-                logV("INVOKE_DIRECT")
             }
             // 0x71
             Opcode.INVOKE_STATIC -> {
                 interpreterState.tempResultObject =
                     handleInstruction35cOrInstruction3rc(instruction, registers, false)
-                logV("INVOKE_STATIC")
             }
             // 0x74
             Opcode.INVOKE_VIRTUAL_RANGE -> {
                 interpreterState.tempResultObject =
                     handleInstruction35cOrInstruction3rc(instruction, registers, true)
-                logV("INVOKE_VIRTUAL_RANGE")
             }
             // 0x75
             Opcode.INVOKE_SUPER_RANGE -> {
                 // TODO: check valid
                 interpreterState.tempResultObject =
                     handleInstruction35cOrInstruction3rc(instruction, registers, true)
-                logV("INVOKE_SUPER_RANGE")
             }
             // 0x76
             Opcode.INVOKE_DIRECT_RANGE -> {
                 // TODO: check valid
                 interpreterState.tempResultObject =
                     handleInstruction35cOrInstruction3rc(instruction, registers, false)
-                logV("INVOKE_DIRECT_RANGE")
             }
             // 0x77
             Opcode.INVOKE_STATIC_RANGE -> {
                 // TODO: check valid
                 interpreterState.tempResultObject =
                     handleInstruction35cOrInstruction3rc(instruction, registers, false)
-                logV("INVOKE_STATIC_RANGE")
             }
             // 0x81
             Opcode.INT_TO_LONG -> {
                 val i = instruction as Instruction12x
                 val value = registers[i.registerB] as Int
                 registers[i.registerA] = value.toLong()
-                registers[i.registerA + 1] = SecondSlotPlaceHolderOf64BitValue
+                registers[i.registerA + 1] = WideValuePlaceHolder
             }
             // 0x95
             Opcode.AND_INT -> {
@@ -683,7 +668,7 @@ object KVMAndroid {
                 val srcValue = registers[i.registerB] as Long
                 val targetValue = registers[i.registerA] as Long + srcValue
                 registers[i.registerA] = targetValue
-                registers[i.registerA + 1] = SecondSlotPlaceHolderOf64BitValue
+                registers[i.registerA + 1] = WideValuePlaceHolder
             }
             // 0xbc
             Opcode.SUB_LONG_2ADDR -> {
@@ -691,7 +676,7 @@ object KVMAndroid {
                 val srcValue = registers[i.registerB] as Long
                 val targetValue = registers[i.registerA] as Long - srcValue
                 registers[i.registerA] = targetValue
-                registers[i.registerA + 1] = SecondSlotPlaceHolderOf64BitValue
+                registers[i.registerA + 1] = WideValuePlaceHolder
             }
             // 0xd0
             Opcode.ADD_INT_LIT16 -> {
@@ -705,6 +690,7 @@ object KVMAndroid {
             }
             else -> {
                 val msg = instructionToString(
+                    registers,
                     instruction,
                     interpreterState.firstInstruction
                 ) + " not supported yet"
@@ -714,6 +700,14 @@ object KVMAndroid {
             }
         }
         usedOpCodes.add(instruction.opcode)
+    }
+
+    private fun logRegisters(registers: Array<Any?>) {
+        // 不要随意就调用toString()可能会递归造成StackOverflow
+        val arr = registers.map {
+            it.representation
+        }.toTypedArray()
+        logI("registers size: ${registers.size}, values: ${arr.contentToString()}")
     }
 
     private fun handleCompare(
@@ -883,7 +877,11 @@ object KVMAndroid {
 
     private fun monitorExit(obj: Any) {}
 
-    object LazyInitializeSystemClassInstance
+    object LazyInitializeInstance {
+        override fun toString(): String {
+            return "LazyInstance"
+        }
+    }
 
 
     private fun handleNewInstanceInstruction(instruction: Instruction21c): Any {
@@ -892,7 +890,7 @@ object KVMAndroid {
             logV("NEW_INSTANCE: $type")
             val clazz = loadClassBySignatureUsingClassLoader(type)
             logV("NEW_INSTANCE instruction: lazy handle class: $clazz")
-            LazyInitializeSystemClassInstance
+            LazyInitializeInstance
         } else {
             throw IllegalArgumentException("referenceType is not TYPE")
         }
@@ -1013,7 +1011,7 @@ object KVMAndroid {
             is Instruction3rc -> i.startRegister
             else -> throw IllegalArgumentException("?")
         }
-        if (registers[firstIndex] is LazyInitializeSystemClassInstance) {
+        if (registers[firstIndex] is LazyInitializeInstance) {
             // replace LazyInitializeSystemClassInstance to the real object
             registers[firstIndex] = newObj
         }
@@ -1052,7 +1050,7 @@ object KVMAndroid {
     private fun remove64BitPlaceHolders(invokeParams: Array<Any?>) =
         invokeParams.filter {
             // need reference equals
-            it !== SecondSlotPlaceHolderOf64BitValue
+            it !== WideValuePlaceHolder
         }.toTypedArray()
 
     private fun parametersFromFiveRegister(
@@ -1091,11 +1089,13 @@ object KVMAndroid {
 
     @Suppress("NOTHING_TO_INLINE")
     private inline fun logInstruction(
+        registers: Array<Any?>,
         instruction: DexBackedInstruction,
         state: InterpreterState
     ) {
         logI(
             "" + state.methodForDebug + " " + instructionToString(
+                registers,
                 instruction,
                 state.firstInstruction
             )
@@ -1103,10 +1103,13 @@ object KVMAndroid {
     }
 
     private fun instructionToString(
+        registers: Array<Any?>,
         instruction: DexBackedInstruction,
         firstInstruction: DexBackedInstruction
     ) =
-        "${instruction.getRelativeOffsetTo(firstInstruction)}: ${instruction.opcode}, ${instruction.opcode.format}, ${instruction.detail}"
+        "${instruction.getRelativeOffsetTo(firstInstruction)}: ${instruction.opcode}, ${instruction.opcode.format}, ${instruction.getDetail(
+            registers
+        )}"
 
     @Suppress("NOTHING_TO_INLINE")
     private inline fun logV(msg: String) {
@@ -1158,6 +1161,38 @@ object KVMAndroid {
             dexClassesMap[definingClass]
         }
     }
+}
+
+private fun Instruction.getDetail(registers: Array<Any?>): String {
+    val builder = StringBuilder()
+    if (this is OneRegisterInstruction) {
+        builder.append("A=$registerA(${registers[registerA].representation}) ")
+    }
+    if (this is TwoRegisterInstruction) {
+        builder.append("B=$registerB(${registers[registerB].representation}) ")
+    }
+    if (this is ThreeRegisterInstruction) {
+        builder.append("C=$registerC(${registers[registerC].representation}) ")
+    }
+    // no 4 register
+    if (this is FiveRegisterInstruction) {
+        builder.append("C=$registerC(${registers[registerC].representation}) ")
+        builder.append("D=$registerD(${registers[registerD].representation}) ")
+        builder.append("E=$registerE(${registers[registerE].representation}) ")
+        builder.append("F=$registerF(${registers[registerF].representation}) ")
+        builder.append("G=$registerG(${registers[registerG].representation}) ")
+        builder.append("count=$registerCount ")
+    }
+    if (this is ReferenceInstruction) {
+        builder.append("${ReferenceType.toString(referenceType)}=$reference ")
+    }
+    if (this is WideLiteralInstruction) {
+        builder.append("wideLiteral: $wideLiteral ")
+    }
+    if (this is NarrowLiteralInstruction) {
+        builder.append("narrowLiteral: $narrowLiteral ")
+    }
+    return builder.toString()
 }
 
 private fun DexBackedInstruction.getRelativeOffsetTo(instruction: DexBackedInstruction): Int {
