@@ -20,7 +20,6 @@ import org.jf.dexlib2.iface.reference.FieldReference
 import org.jf.dexlib2.iface.reference.MethodReference
 import org.jf.dexlib2.iface.reference.StringReference
 import org.jf.dexlib2.iface.reference.TypeReference
-import quickpatch.sdk.ReflectionBridge
 import java.io.File
 import java.lang.StringBuilder
 import java.lang.reflect.Method
@@ -143,7 +142,9 @@ object KVMAndroid {
         needThisObj: Boolean,
         parameters: Array<Any?>
     ): Any? {
-        logV("invoke method: $method")
+        val frame = getStackFrame()
+        logI("INTERPRETER INVOKING METHOD: $method")
+        frame.push(Frame())
         val impl = method.implementation!!
         val parameterCountBy32BitsWithoutThisObj = calculate32BitCount(method.parameterTypes)
         val parameterCount =
@@ -169,8 +170,20 @@ object KVMAndroid {
             state.jumpInstruction = null
             interpretInstruction(reader, instruction, registers, state)
         } while (!state.returned)
-        logV("returned with value: ${state.returnValue}")
-        return state.returnValue
+        val returnValue = convertToReturnType(state.returnValue, method.returnType)
+        logI("RETURN WITH VALUE: ${state.returnValue.representation}, CONVERTED: ${returnValue.representation}")
+        frame.pop()
+        logI("RESUME METHOD: $method")
+        return returnValue
+    }
+
+    private fun convertToReturnType(returnValue: Any?, returnType: String): Any? {
+        when {
+            returnType == "Z" && returnValue is Int -> {
+                return returnValue != 0
+            }
+        }
+        return returnValue
     }
 
     private fun addSecondSlotPlaceHolders(parameters: Array<Any?>): Array<Any?> {
@@ -226,46 +239,42 @@ object KVMAndroid {
             // 0x07
             Opcode.MOVE_OBJECT -> {
                 val i = instruction as Instruction12x
-                val srcValue = registers[i.registerB]
+                val srcValue = checkZeroToObject(registers[i.registerB])
                 registers[i.registerA] = srcValue
             }
             // 0x08
             Opcode.MOVE_OBJECT_FROM16 -> {
                 val i = instruction as Instruction22x
-                val srcValue = registers[i.registerB]
+                val srcValue = checkZeroToObject(registers[i.registerB])
                 registers[i.registerA] = srcValue
             }
             // 0x09
             Opcode.MOVE_OBJECT_16 -> {
                 val i = instruction as Instruction32x
-                val srcValue = registers[i.registerB]
+                val srcValue = checkZeroToObject(registers[i.registerB])
                 registers[i.registerA] = srcValue
             }
             // 0x0a
             Opcode.MOVE_RESULT -> {
                 val i = instruction as Instruction11x
                 registers[i.registerA] = interpreterState.tempResultObject
-                logV("MOVE_RESULT: ${interpreterState.tempResultObject}")
             }
             // 0x0b
             Opcode.MOVE_RESULT_WIDE -> {
                 val i = instruction as Instruction11x
                 registers[i.registerA] = interpreterState.tempResultObject
                 registers[i.registerA + 1] = WideValuePlaceHolder
-                logV("MOVE_RESULT_WIDE: ${interpreterState.tempResultObject}")
             }
             // 0x0c
             Opcode.MOVE_RESULT_OBJECT -> {
                 val i = instruction as Instruction11x
                 registers[i.registerA] = interpreterState.tempResultObject
-                logV("MOVE_RESULT_OBJECT: ${interpreterState.tempResultObject}")
             }
             // 0x0e
             Opcode.RETURN_VOID -> {
                 instruction as Instruction10x
                 interpreterState.returned = true
                 interpreterState.returnValue = VoidReturnValue
-                logV("RETURN_VOID: null")
             }
             // 0x0f
             Opcode.RETURN -> {
@@ -273,7 +282,6 @@ object KVMAndroid {
                 val value = registers[i.registerA]
                 interpreterState.returned = true
                 interpreterState.returnValue = value
-                logV("RETURN: $value")
             }
             // 0x10
             Opcode.RETURN_WIDE -> {
@@ -282,15 +290,13 @@ object KVMAndroid {
                 val value = registers[i.registerA]
                 interpreterState.returned = true
                 interpreterState.returnValue = value
-                logV("RETURN_WIDE: $value")
             }
             // 0x11
             Opcode.RETURN_OBJECT -> {
                 val i = instruction as Instruction11x
-                val value = registers[i.registerA]
+                val value = checkZeroToObject(registers[i.registerA])
                 interpreterState.returned = true
                 interpreterState.returnValue = value
-                logV("RETURN_OBJECT: $value")
             }
             // 0x12
             Opcode.CONST_4 -> {
@@ -340,7 +346,6 @@ object KVMAndroid {
                 } else {
                     throw IllegalArgumentException("referenceType is not STRING")
                 }
-                logV("" + i)
             }
             // 0x1c
             Opcode.CONST_CLASS -> {
@@ -365,6 +370,19 @@ object KVMAndroid {
                     } else {
                         clazz.cast(value)
                     }
+                } else {
+                    throw IllegalArgumentException("referenceType is not TYPE")
+                }
+            }
+            // 0x20
+            Opcode.INSTANCE_OF -> {
+                val i = instruction as Instruction22c
+                if (i.referenceType == ReferenceType.TYPE) {
+                    val type = (i.reference as TypeReference).type
+                    val value = registers[i.registerB]
+                    val clazz = loadClassBySignatureUsingClassLoader(type)
+                    val result = if (clazz.isInstance(value)) 1 else 0
+                    registers[i.registerA] = result
                 } else {
                     throw IllegalArgumentException("referenceType is not TYPE")
                 }
@@ -410,7 +428,6 @@ object KVMAndroid {
                 val value1 = registers[i.registerB] as Long
                 val value2 = registers[i.registerC] as Long
                 registers[i.registerA] = value1.compareTo(value2)
-                logV("" + i)
             }
             // 0x32 - 0x37
             Opcode.IF_EQ,
@@ -596,6 +613,12 @@ object KVMAndroid {
                 interpreterState.tempResultObject =
                     handleInstruction35cOrInstruction3rc(instruction, registers, false)
             }
+            // 0x72
+            Opcode.INVOKE_INTERFACE -> {
+                interpreterState.tempResultObject =
+                    handleInstruction35cOrInstruction3rc(instruction, registers, true)
+            }
+            // 0x73 not exists
             // 0x74
             Opcode.INVOKE_VIRTUAL_RANGE -> {
                 interpreterState.tempResultObject =
@@ -662,6 +685,72 @@ object KVMAndroid {
                 registers[i.registerA] =
                     (registers[i.registerB] as Int) ushr (registers[i.registerC] as Int)
             }
+            // 0xb0
+            Opcode.ADD_INT_2ADDR -> {
+                val i = instruction as Instruction12x
+                registers[i.registerA] =
+                    (registers[i.registerA] as Int) + (registers[i.registerB] as Int)
+            }
+            // 0xb1
+            Opcode.SUB_INT_2ADDR -> {
+                val i = instruction as Instruction12x
+                registers[i.registerA] =
+                    (registers[i.registerA] as Int) - (registers[i.registerB] as Int)
+            }
+            // 0xb2
+            Opcode.MUL_INT_2ADDR -> {
+                val i = instruction as Instruction12x
+                registers[i.registerA] =
+                    (registers[i.registerA] as Int) * (registers[i.registerB] as Int)
+            }
+            // 0xb3
+            Opcode.DIV_INT_2ADDR -> {
+                val i = instruction as Instruction12x
+                registers[i.registerA] =
+                    (registers[i.registerA] as Int) / (registers[i.registerB] as Int)
+            }
+            // 0xb4
+            Opcode.REM_INT_2ADDR -> {
+                val i = instruction as Instruction12x
+                registers[i.registerA] =
+                    (registers[i.registerA] as Int) % (registers[i.registerB] as Int)
+            }
+            // 0xb5
+            Opcode.AND_INT_2ADDR -> {
+                val i = instruction as Instruction12x
+                registers[i.registerA] =
+                    (registers[i.registerA] as Int) and (registers[i.registerB] as Int)
+            }
+            // 0xb6
+            Opcode.OR_INT_2ADDR -> {
+                val i = instruction as Instruction12x
+                registers[i.registerA] =
+                    (registers[i.registerA] as Int) or (registers[i.registerB] as Int)
+            }
+            // 0xb7
+            Opcode.XOR_INT_2ADDR -> {
+                val i = instruction as Instruction12x
+                registers[i.registerA] =
+                    (registers[i.registerA] as Int) xor (registers[i.registerB] as Int)
+            }
+            // 0xb8
+            Opcode.SHL_INT_2ADDR -> {
+                val i = instruction as Instruction12x
+                registers[i.registerA] =
+                    (registers[i.registerA] as Int) shl (registers[i.registerB] as Int)
+            }
+            // 0xb9
+            Opcode.SHR_INT_2ADDR -> {
+                val i = instruction as Instruction12x
+                registers[i.registerA] =
+                    (registers[i.registerA] as Int) shr (registers[i.registerB] as Int)
+            }
+            // 0xba
+            Opcode.USHR_INT_2ADDR -> {
+                val i = instruction as Instruction12x
+                registers[i.registerA] =
+                    (registers[i.registerA] as Int) ushr (registers[i.registerB] as Int)
+            }
             // 0xbb
             Opcode.ADD_LONG_2ADDR -> {
                 val i = instruction as Instruction12x
@@ -702,6 +791,13 @@ object KVMAndroid {
         usedOpCodes.add(instruction.opcode)
     }
 
+    private fun checkZeroToObject(value: Any?): Any? {
+        if (value is Int && value == 0) {
+            return null
+        }
+        return value
+    }
+
     private fun logRegisters(registers: Array<Any?>) {
         // 不要随意就调用toString()可能会递归造成StackOverflow
         val arr = registers.map {
@@ -720,8 +816,8 @@ object KVMAndroid {
         val rawValue1 = registers[i.registerA]
         val rawValue2 = registers[i.registerB]
         // TODO: different types
-        val value1 = if (rawValue1 is Enum<*>) rawValue1.ordinal else rawValue1 as Int
-        val value2 = if (rawValue2 is Enum<*>) rawValue2.ordinal else rawValue2 as Int
+        val value1 = toInt(rawValue1)
+        val value2 = toInt(rawValue2)
         val condition = when (instruction.opcode) {
             Opcode.IF_EQ -> value1 == value2
             Opcode.IF_NE -> value1 != value2
@@ -731,10 +827,33 @@ object KVMAndroid {
             Opcode.IF_LE -> value1 <= value2
             else -> throw IllegalArgumentException("?")
         }
+
         if (condition) {
             reader.offset = i.instructionStart + i.codeOffset * 2
             interpreterState.jumpInstruction =
                 DexBackedInstruction.readFrom(reader) as DexBackedInstruction
+        }
+    }
+
+    private fun toInt(rawValue: Any?): Int {
+        return when {
+            rawValue == null -> 0
+            JavaTypes.isWrapperClassInstance(rawValue) -> intValueOf(rawValue)
+            rawValue is Enum<*> -> rawValue.ordinal
+            Object::class.java.isInstance(rawValue) -> 1
+            else -> throw throw throw TODO()
+        }
+    }
+
+    private fun intValueOf(rawValue: Any): Int {
+        return when (rawValue) {
+            is Int -> rawValue
+            is Float -> rawValue.toInt()
+            is Short -> rawValue.toInt()
+            is Byte -> rawValue.toInt()
+            is Boolean -> if (rawValue) 1 else 0
+            is Char -> rawValue.toInt()
+            else -> throw IllegalArgumentException("?")
         }
     }
 
@@ -749,11 +868,7 @@ object KVMAndroid {
         @Suppress("MoveVariableDeclarationIntoWhen")
         val rawValue = registers[i.registerA]
         // regard null pointer as 0 in register, int as int, non-null object as 1
-        val value: Int = when (rawValue) {
-            null -> 0
-            is Int -> rawValue
-            else -> 1 // trick?
-        }
+        val value: Int = toInt(rawValue)
         val condition = when (instruction.opcode) {
             Opcode.IF_EQZ -> value == 0
             Opcode.IF_NEZ -> value != 0
@@ -856,17 +971,14 @@ object KVMAndroid {
         val field = clazz.getDeclaredField(fieldRef.name)
         field.isAccessible = true
         when (field.type) {
-            Boolean::class.java -> field.setBoolean(targetObject, fieldValue as Boolean)
-            Byte::class.java -> field.setByte(targetObject, fieldValue as Byte)
+            Boolean::class.java -> field.setBoolean(targetObject, (fieldValue as Int) != 0)
+            Byte::class.java -> field.setByte(targetObject, (fieldValue as Int).toByte())
             Int::class.java -> field.setInt(targetObject, fieldValue as Int)
             Long::class.java -> {
-                val a = (fieldValue as Long)
-                field.setLong(targetObject, a)
-                println("setLong")
+                field.setLong(targetObject, (fieldValue as Int).toLong())
             }
             else -> {
                 field.set(targetObject, fieldValue)
-                println("setObject")
             }
         }
     }
@@ -875,6 +987,7 @@ object KVMAndroid {
     private fun monitorEnter(obj: Any) {
     }
 
+    // TODO
     private fun monitorExit(obj: Any) {}
 
     object LazyInitializeInstance {
@@ -883,13 +996,10 @@ object KVMAndroid {
         }
     }
 
-
     private fun handleNewInstanceInstruction(instruction: Instruction21c): Any {
         return if (instruction.referenceType == ReferenceType.TYPE) {
             val type = (instruction.reference as TypeReference).type
-            logV("NEW_INSTANCE: $type")
             val clazz = loadClassBySignatureUsingClassLoader(type)
-            logV("NEW_INSTANCE instruction: lazy handle class: $clazz")
             LazyInitializeInstance
         } else {
             throw IllegalArgumentException("referenceType is not TYPE")
@@ -901,7 +1011,6 @@ object KVMAndroid {
             throw IllegalArgumentException("referenceType is not TYPE")
         }
         val type = (instruction.reference as TypeReference).type
-        logV("create array: $type")
         val dimensionCount = type.lastIndexOf('[') + 1
         if (dimensionCount <= 0) {
             throw IllegalArgumentException("$type is not an array?")
@@ -976,14 +1085,14 @@ object KVMAndroid {
         } else {
             if (needThisObj) {
                 if (instruction.opcode == Opcode.INVOKE_SUPER) {
-                    ReflectionBridge.callSuperMethodNative(
+                    NativeBridge.callSuperMethodNative(
                         thisObj,
                         methodRef.name,
                         getMethodSignature(methodRef),
                         params
                     )
                 } else {
-                    ReflectionBridge.callThisMethodNative(
+                    NativeBridge.callThisMethodNative(
                         thisObj,
                         methodRef.name,
                         getMethodSignature(methodRef),
@@ -1026,18 +1135,18 @@ object KVMAndroid {
             if (param != null && type != null) {
                 when (param) {
                     is Int -> {
-                        when (type) {
-                            Boolean::class.java -> params[index] = param != 0
-                            Byte::class.java -> params[index] = param.toByte()
-                            Char::class.java -> params[index] = param.toChar()
-                            Short::class.java -> params[index] = param.toShort()
+                        params[index] = when {
+                            type === Boolean::class.java -> param != 0
+                            type === Byte::class.java -> param.toByte()
+                            type === Char::class.java -> param.toChar()
+                            type === Short::class.java -> param.toShort()
+                            Object::class.java.isAssignableFrom(type) -> null
+                            else -> params[index]
                         }
                     }
                     is Long -> {
-                        logV("LONG")
                     }
                     is Double -> {
-                        logV("DOUBLE")
                     }
                 }
             }
@@ -1094,7 +1203,7 @@ object KVMAndroid {
         state: InterpreterState
     ) {
         logI(
-            "" + state.methodForDebug + " " + instructionToString(
+            instructionToString(
                 registers,
                 instruction,
                 state.firstInstruction
@@ -1113,12 +1222,12 @@ object KVMAndroid {
 
     @Suppress("NOTHING_TO_INLINE")
     private inline fun logV(msg: String) {
-        Log.v(TAG, msg)
+        Log.v(TAG, "  ".repeat(getStackFrame().size) + "├─" + msg) // ├ └
     }
 
     @Suppress("NOTHING_TO_INLINE")
     private inline fun logI(msg: String) {
-        Log.i(TAG, msg)
+        Log.i(TAG, "  ".repeat(getStackFrame().size) + "├─" + msg)
     }
 
     fun invokeTestMethodTime(thisObj: Any?, className: String, methodName: String): Long {
@@ -1191,6 +1300,9 @@ private fun Instruction.getDetail(registers: Array<Any?>): String {
     }
     if (this is NarrowLiteralInstruction) {
         builder.append("narrowLiteral: $narrowLiteral ")
+    }
+    if (this is OffsetInstruction) {
+        builder.append("offset: $codeOffset ")
     }
     return builder.toString()
 }

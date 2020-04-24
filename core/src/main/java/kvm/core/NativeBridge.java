@@ -1,4 +1,4 @@
-package quickpatch.sdk;
+package kvm.core;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -9,7 +9,7 @@ import java.lang.reflect.Method;
  * 2. super方法通过JNI方式调用非虚方法
  */
 @SuppressWarnings("unused")
-public class ReflectionBridge {
+public class NativeBridge {
 
     static {
         System.loadLibrary("native-lib");
@@ -54,11 +54,11 @@ public class ReflectionBridge {
     }
 
     private static String getSuperClassName(Object obj) {
-        return obj.getClass().getSuperclass().getCanonicalName().replace(".", "/");
+        return obj.getClass().getSuperclass().getName().replace(".", "/");
     }
 
     private static String getClassName(Object obj) {
-        return obj.getClass().getCanonicalName().replace(".", "/");
+        return obj.getClass().getName().replace(".", "/");
     }
 
     private static Object callNonVirtualMethod(Object obj, String classNameOfMethod, String methodName, String methodSignature, Object[] invokeArgs) {

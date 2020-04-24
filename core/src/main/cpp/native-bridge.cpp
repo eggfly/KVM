@@ -2,10 +2,10 @@
 #include <android/log.h>
 #include <string.h>
 
-#define  LOG_TAG    "ReflectionBridge"
+#define  LOG_TAG    "NativeBridge"
 // #define  LOGI(...)  __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 // #define LOGE(...)  __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
-#define LOGD(...)  __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#define LOGD(...)  __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
 
 
 inline jobject
@@ -33,7 +33,7 @@ inline jobject construct(JNIEnv *env, const char *className, const char *sig, T.
 
 extern "C"
 JNIEXPORT jobject JNICALL
-Java_quickpatch_sdk_ReflectionBridge_callNonVirtualMethod(JNIEnv *env, jclass __unused type,
+Java_kvm_core_NativeBridge_callNonVirtualMethod(JNIEnv *env, jclass __unused type,
                                                           jobject obj,
                                                           jstring classNameOfMethod,
                                                           jstring methodName,

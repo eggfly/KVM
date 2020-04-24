@@ -15,14 +15,16 @@ import kotlinx.android.synthetic.main.activity_main.*
 import kvm.core.DecryptFile
 import kvm.core.KVMAndroid
 import kvm.core.classToSignature
-import quickpatch.sdk.ReflectionBridge
+import kvm.core.NativeBridge
 import java.io.File
 
 const val TAG = "MainActivity"
 
 class MainActivity : AppCompatActivity() {
 
-    private fun aaa(s: String) {}
+    @Suppress("unused")
+    private fun aaa(s: String) {
+    }
 
     companion object {
         private const val TAG2 = "MainActivity"
@@ -36,7 +38,7 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("MissingSuperCall")
     override fun onCreate(savedInstanceState: Bundle?) {
-        ReflectionBridge.callSuperMethodNative(
+        NativeBridge.callSuperMethodNative(
             this,
             "onCreate",
             "(Landroid/os/Bundle;)V",
@@ -47,7 +49,7 @@ class MainActivity : AppCompatActivity() {
         TestJavaClass().foo()
         button.setOnClickListener {
             val aa = Class.forName("[[I")
-            val stringArrayClass =
+            @Suppress("UNUSED_VARIABLE") val stringArrayClass =
                 Class.forName("[Ljava.lang.String;")
 
             KVMAndroid.invoke(
