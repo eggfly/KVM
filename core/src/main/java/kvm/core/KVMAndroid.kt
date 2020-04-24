@@ -767,15 +767,242 @@ object KVMAndroid {
                 registers[i.registerA] = targetValue
                 registers[i.registerA + 1] = WideValuePlaceHolder
             }
+            // 0xbd
+            Opcode.MUL_LONG_2ADDR -> {
+                val i = instruction as Instruction12x
+                val srcValue = registers[i.registerB] as Long
+                val targetValue = registers[i.registerA] as Long * srcValue
+                registers[i.registerA] = targetValue
+                registers[i.registerA + 1] = WideValuePlaceHolder
+            }
+            // 0xbe
+            Opcode.DIV_LONG_2ADDR -> {
+                val i = instruction as Instruction12x
+                val srcValue = registers[i.registerB] as Long
+                val targetValue = registers[i.registerA] as Long / srcValue
+                registers[i.registerA] = targetValue
+                registers[i.registerA + 1] = WideValuePlaceHolder
+            }
+            // 0xbf
+            Opcode.REM_LONG_2ADDR -> {
+                val i = instruction as Instruction12x
+                val srcValue = registers[i.registerB] as Long
+                val targetValue = registers[i.registerA] as Long % srcValue
+                registers[i.registerA] = targetValue
+                registers[i.registerA + 1] = WideValuePlaceHolder
+            }
+            // 0xc0
+            Opcode.AND_LONG_2ADDR -> {
+                val i = instruction as Instruction12x
+                val srcValue = registers[i.registerB] as Long
+                val targetValue = registers[i.registerA] as Long and srcValue
+                registers[i.registerA] = targetValue
+                registers[i.registerA + 1] = WideValuePlaceHolder
+            }
+            // 0xc1
+            Opcode.OR_LONG_2ADDR -> {
+                val i = instruction as Instruction12x
+                val srcValue = registers[i.registerB] as Long
+                val targetValue = registers[i.registerA] as Long or srcValue
+                registers[i.registerA] = targetValue
+                registers[i.registerA + 1] = WideValuePlaceHolder
+            }
+            // 0xc2
+            Opcode.XOR_LONG_2ADDR -> {
+                val i = instruction as Instruction12x
+                val srcValue = registers[i.registerB] as Long
+                val targetValue = registers[i.registerA] as Long xor srcValue
+                registers[i.registerA] = targetValue
+                registers[i.registerA + 1] = WideValuePlaceHolder
+            }
+            // 0xc3
+            Opcode.SHL_LONG_2ADDR -> {
+                val i = instruction as Instruction12x
+                val srcValue = registers[i.registerB] as Int
+                val targetValue = registers[i.registerA] as Long shl srcValue
+                registers[i.registerA] = targetValue
+                registers[i.registerA + 1] = WideValuePlaceHolder
+            }
+            // 0xc4
+            Opcode.SHR_LONG_2ADDR -> {
+                val i = instruction as Instruction12x
+                val srcValue = registers[i.registerB] as Int
+                val targetValue = registers[i.registerA] as Long shr srcValue
+                registers[i.registerA] = targetValue
+                registers[i.registerA + 1] = WideValuePlaceHolder
+            }
+            // 0xc5
+            Opcode.USHR_LONG_2ADDR -> {
+                val i = instruction as Instruction12x
+                val srcValue = registers[i.registerB] as Int
+                val targetValue = registers[i.registerA] as Long ushr srcValue
+                registers[i.registerA] = targetValue
+                registers[i.registerA + 1] = WideValuePlaceHolder
+            }
+            // 0xc6
+            Opcode.ADD_FLOAT_2ADDR -> {
+                val i = instruction as Instruction12x
+                registers[i.registerA] =
+                    (registers[i.registerA] as Float) + (registers[i.registerB] as Float)
+            }
+            // 0xc7
+            Opcode.SUB_FLOAT_2ADDR -> {
+                val i = instruction as Instruction12x
+                registers[i.registerA] =
+                    (registers[i.registerA] as Float) - (registers[i.registerB] as Float)
+            }
+            // 0xc8
+            Opcode.MUL_FLOAT_2ADDR -> {
+                val i = instruction as Instruction12x
+                registers[i.registerA] =
+                    (registers[i.registerA] as Float) * (registers[i.registerB] as Float)
+            }
+            // 0xc9
+            Opcode.DIV_FLOAT_2ADDR -> {
+                val i = instruction as Instruction12x
+                registers[i.registerA] =
+                    (registers[i.registerA] as Float) / (registers[i.registerB] as Float)
+            }
+            // 0xca
+            Opcode.REM_FLOAT_2ADDR -> {
+                val i = instruction as Instruction12x
+                registers[i.registerA] =
+                    (registers[i.registerA] as Float) % (registers[i.registerB] as Float)
+            }
+            // 0xcb
+            Opcode.ADD_DOUBLE_2ADDR -> {
+                val i = instruction as Instruction12x
+                val srcValue = registers[i.registerB] as Double
+                val targetValue = registers[i.registerA] as Double + srcValue
+                registers[i.registerA] = targetValue
+                registers[i.registerA + 1] = WideValuePlaceHolder
+            }
+            // 0xcc
+            Opcode.SUB_DOUBLE_2ADDR -> {
+                val i = instruction as Instruction12x
+                val srcValue = registers[i.registerB] as Double
+                val targetValue = registers[i.registerA] as Double - srcValue
+                registers[i.registerA] = targetValue
+                registers[i.registerA + 1] = WideValuePlaceHolder
+            }
+            // 0xcd
+            Opcode.MUL_DOUBLE_2ADDR -> {
+                val i = instruction as Instruction12x
+                val srcValue = registers[i.registerB] as Double
+                val targetValue = registers[i.registerA] as Double * srcValue
+                registers[i.registerA] = targetValue
+                registers[i.registerA + 1] = WideValuePlaceHolder
+            }
+            // 0xce
+            Opcode.DIV_DOUBLE_2ADDR -> {
+                val i = instruction as Instruction12x
+                val srcValue = registers[i.registerB] as Double
+                val targetValue = registers[i.registerA] as Double / srcValue
+                registers[i.registerA] = targetValue
+                registers[i.registerA + 1] = WideValuePlaceHolder
+            }
+            // 0xcf
+            Opcode.REM_DOUBLE_2ADDR -> {
+                val i = instruction as Instruction12x
+                val srcValue = registers[i.registerB] as Double
+                val targetValue = registers[i.registerA] as Double % srcValue
+                registers[i.registerA] = targetValue
+                registers[i.registerA + 1] = WideValuePlaceHolder
+            }
             // 0xd0
             Opcode.ADD_INT_LIT16 -> {
                 val i = instruction as Instruction22s
                 registers[i.registerA] = registers[i.registerB] as Int + i.narrowLiteral
             }
+            // 0xd1
+            Opcode.RSUB_INT -> {
+                val i = instruction as Instruction22s
+                registers[i.registerA] = i.narrowLiteral - registers[i.registerB] as Int
+            }
+            // 0xd2
+            Opcode.MUL_INT_LIT16 -> {
+                val i = instruction as Instruction22s
+                registers[i.registerA] = registers[i.registerB] as Int * i.narrowLiteral
+            }
+            // 0xd3
+            Opcode.DIV_INT_LIT16 -> {
+                val i = instruction as Instruction22s
+                registers[i.registerA] = registers[i.registerB] as Int / i.narrowLiteral
+            }
+            // 0xd4
+            Opcode.REM_INT_LIT16 -> {
+                val i = instruction as Instruction22s
+                registers[i.registerA] = registers[i.registerB] as Int % i.narrowLiteral
+            }
+            // 0xd5
+            Opcode.AND_INT_LIT16 -> {
+                val i = instruction as Instruction22s
+                registers[i.registerA] = registers[i.registerB] as Int and i.narrowLiteral
+            }
+            // 0xd6
+            Opcode.OR_INT_LIT16 -> {
+                val i = instruction as Instruction22s
+                registers[i.registerA] = registers[i.registerB] as Int or i.narrowLiteral
+            }
+            // 0xd7
+            Opcode.XOR_INT_LIT16 -> {
+                val i = instruction as Instruction22s
+                registers[i.registerA] = registers[i.registerB] as Int xor i.narrowLiteral
+            }
             // 0xd8
             Opcode.ADD_INT_LIT8 -> {
                 val i = instruction as Instruction22b
                 registers[i.registerA] = registers[i.registerB] as Int + i.narrowLiteral
+            }
+            // 0xd9
+            Opcode.RSUB_INT_LIT8 -> {
+                val i = instruction as Instruction22b
+                registers[i.registerA] = i.narrowLiteral - registers[i.registerB] as Int
+            }
+            // 0xda
+            Opcode.MUL_INT_LIT8 -> {
+                val i = instruction as Instruction22b
+                registers[i.registerA] = registers[i.registerB] as Int * i.narrowLiteral
+            }
+            // 0xdb
+            Opcode.DIV_INT_LIT8 -> {
+                val i = instruction as Instruction22b
+                registers[i.registerA] = registers[i.registerB] as Int / i.narrowLiteral
+            }
+            // 0xdc
+            Opcode.REM_INT_LIT8 -> {
+                val i = instruction as Instruction22b
+                registers[i.registerA] = registers[i.registerB] as Int % i.narrowLiteral
+            }
+            // 0xdd
+            Opcode.AND_INT_LIT8 -> {
+                val i = instruction as Instruction22b
+                registers[i.registerA] = registers[i.registerB] as Int and i.narrowLiteral
+            }
+            // 0xde
+            Opcode.OR_INT_LIT8 -> {
+                val i = instruction as Instruction22b
+                registers[i.registerA] = registers[i.registerB] as Int or i.narrowLiteral
+            }
+            // 0xdf
+            Opcode.XOR_INT_LIT8 -> {
+                val i = instruction as Instruction22b
+                registers[i.registerA] = registers[i.registerB] as Int xor i.narrowLiteral
+            }
+            // 0xe0
+            Opcode.SHL_INT_LIT8 -> {
+                val i = instruction as Instruction22b
+                registers[i.registerA] = registers[i.registerB] as Int shl i.narrowLiteral
+            }
+            // 0xe1
+            Opcode.SHR_INT_LIT8 -> {
+                val i = instruction as Instruction22b
+                registers[i.registerA] = registers[i.registerB] as Int shr i.narrowLiteral
+            }
+            // 0xe2
+            Opcode.USHR_INT_LIT8 -> {
+                val i = instruction as Instruction22b
+                registers[i.registerA] = registers[i.registerB] as Int ushr i.narrowLiteral
             }
             else -> {
                 val msg = instructionToString(
