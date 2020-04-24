@@ -143,7 +143,7 @@ object KVMAndroid {
         parameters: Array<Any?>
     ): Any? {
         val frame = getStackFrame()
-        logI("INTERPRETER INVOKING METHOD: $method")
+        logI("INVOKE METHOD: $method")
         frame.push(Frame())
         val impl = method.implementation!!
         val parameterCountBy32BitsWithoutThisObj = calculate32BitCount(method.parameterTypes)
@@ -1314,7 +1314,7 @@ object KVMAndroid {
                 if (instruction.opcode == Opcode.INVOKE_SUPER) {
                     NativeBridge.callSuperMethodNative(
                         thisObj,
-                        methodRef.definingClass,
+                        methodRef.definingClass.trimStart('L').trimEnd(';'),
                         methodRef.name,
                         getMethodSignature(methodRef),
                         params
@@ -1450,7 +1450,7 @@ object KVMAndroid {
 
     @Suppress("NOTHING_TO_INLINE")
     private inline fun logV(msg: String) {
-        Log.v(TAG, "  ".repeat(getStackFrame().size) + "├─" + msg) // ├ └
+        Log.v(TAG, "  ".repeat(getStackFrame().size) + "├─" + msg) // ├─ └─
     }
 
     @Suppress("NOTHING_TO_INLINE")
