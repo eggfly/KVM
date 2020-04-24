@@ -44,17 +44,14 @@ public class NativeBridge {
      * 使用JNI反射的方法，调用super函数
      *
      * @param obj
+     * @param superClassName
      * @param methodName
      * @param methodSignature
      * @param invokeArgs
      * @return
      */
-    public static Object callSuperMethodNative(Object obj, String methodName, String methodSignature, Object[] invokeArgs) {
-        return callNonVirtualMethod(obj, getSuperClassName(obj), methodName, methodSignature, invokeArgs);
-    }
-
-    private static String getSuperClassName(Object obj) {
-        return obj.getClass().getSuperclass().getName().replace(".", "/");
+    public static Object callSuperMethodNative(Object obj, String superClassName, String methodName, String methodSignature, Object[] invokeArgs) {
+        return callNonVirtualMethod(obj, superClassName, methodName, methodSignature, invokeArgs);
     }
 
     private static String getClassName(Object obj) {

@@ -26,7 +26,7 @@ object VMProxyInner {
         return invoke(classOfMethod, methodName, parameterTypes, !isStatic, myArgs)
     }
 
-    private fun convertToSignature(it: Class<*>): String {
+    fun convertToSignature(it: Class<*>): String {
         return when (it) {
             Boolean::class.java -> "Z"
             Byte::class.java -> "B"

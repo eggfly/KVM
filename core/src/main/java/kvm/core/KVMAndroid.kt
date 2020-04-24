@@ -1314,6 +1314,7 @@ object KVMAndroid {
                 if (instruction.opcode == Opcode.INVOKE_SUPER) {
                     NativeBridge.callSuperMethodNative(
                         thisObj,
+                        methodRef.definingClass,
                         methodRef.name,
                         getMethodSignature(methodRef),
                         params

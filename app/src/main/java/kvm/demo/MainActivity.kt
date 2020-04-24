@@ -12,10 +12,8 @@ import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import kotlinx.android.synthetic.main.activity_main.*
-import kvm.core.DecryptFile
-import kvm.core.KVMAndroid
-import kvm.core.classToSignature
-import kvm.core.NativeBridge
+import kvm.core.*
+import kvm.demo.util.JavaUtils
 import java.io.File
 
 const val TAG = "MainActivity"
@@ -40,6 +38,7 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         NativeBridge.callSuperMethodNative(
             this,
+            this::class.java.superclass!!.name.replace('.', '/'),
             "onCreate",
             "(Landroid/os/Bundle;)V",
             arrayOf(savedInstanceState)
