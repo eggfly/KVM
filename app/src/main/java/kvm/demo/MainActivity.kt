@@ -12,8 +12,10 @@ import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import kotlinx.android.synthetic.main.activity_main.*
-import kvm.core.*
-import kvm.demo.util.JavaUtils
+import kvm.core.DecryptFile
+import kvm.core.KVMAndroid
+import kvm.core.NativeBridge
+import kvm.core.classToSignature
 import java.io.File
 
 const val TAG = "MainActivity"
@@ -30,7 +32,7 @@ class MainActivity : AppCompatActivity() {
         // Used to load the 'native-lib' library on application startup.
         init {
             Log.d(TAG2, "init()")
-            System.loadLibrary("native-lib")
+            System.loadLibrary("kvm-demo")
         }
     }
 

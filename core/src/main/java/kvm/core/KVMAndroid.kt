@@ -40,7 +40,7 @@ private val Any?.representation: String
                 it.toString()
             it is String ->
                 "\"$it\""
-            else -> "${it::class.java.name}@${System.identityHashCode(it)}"
+            else -> "${it::class.java.name}@${Integer.toHexString(System.identityHashCode(it))}"
         }
     }
 
@@ -1030,7 +1030,7 @@ object KVMAndroid {
         val arr = registers.map {
             it.representation
         }.toTypedArray()
-        logI("registers size: ${registers.size}, values: ${arr.contentToString()}")
+        logI("registers: ${arr.contentToString()}, size=${registers.size}")
     }
 
     private fun handleCompare(
@@ -1151,8 +1151,6 @@ object KVMAndroid {
         }
     }
 
-    class BadByteCodeError(s: String) : VirtualMachineError()
-
     private fun getInstanceFieldWithCheck(
         registers: Array<Any?>,
         i: DexBackedInstruction22c,
@@ -1205,7 +1203,7 @@ object KVMAndroid {
                 field.setLong(targetObject, (fieldValue as Int).toLong())
             }
             else -> {
-                field.set(targetObject, fieldValue)
+                field.set(targetObject, checkZeroToObject(fieldValue))
             }
         }
     }
@@ -1524,13 +1522,13 @@ private fun Instruction.getDetail(registers: Array<Any?>): String {
         builder.append("${ReferenceType.toString(referenceType)}=$reference ")
     }
     if (this is WideLiteralInstruction) {
-        builder.append("wideLiteral: $wideLiteral ")
+        builder.append("wideLiteral=$wideLiteral ")
     }
     if (this is NarrowLiteralInstruction) {
-        builder.append("narrowLiteral: $narrowLiteral ")
+        builder.append("narrowLiteral=$narrowLiteral ")
     }
     if (this is OffsetInstruction) {
-        builder.append("offset: $codeOffset ")
+        builder.append("offset=$codeOffset ")
     }
     return builder.toString()
 }

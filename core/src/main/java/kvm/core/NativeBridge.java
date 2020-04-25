@@ -12,7 +12,7 @@ import java.lang.reflect.Method;
 public class NativeBridge {
 
     static {
-        System.loadLibrary("native-lib");
+        System.loadLibrary("kvm");
     }
 
     public static Object callVirtualMethod(Object obj, String methodName, Class[] argTypes, Object[] args, boolean setAccessible) {
